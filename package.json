@@ -1,0 +1,21 @@
+{
+  "name": "nothing-browser",
+  "module": "piggy.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./piggy.ts",
+      "types": "./piggy.ts"
+    }
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "elysia": "^1.4.28",
+    "ernest-logger": "^2.0.4"
+  }
+}
