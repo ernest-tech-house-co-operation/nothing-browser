@@ -1,45 +1,47 @@
 // piggy.ts
-import { detectBinary } from "./piggy/launch/detect";
+import { detectBinary, type BinaryMode } from "./piggy/launch/detect";
 import { spawnBrowser, killBrowser, spawnBrowserOnSocket } from "./piggy/launch/spawn";
 import { PiggyClient } from "./piggy/client";
 import { setClient, setHumanMode, createSiteObject } from "./piggy/register";
 import { routeRegistry, keepAliveSites, startServer, stopServer } from "./piggy/server";
 import logger from "./piggy/logger";
 
-type BrowserMode = "tab" | "process";
+type TabMode = "tab" | "process";
 type SiteObject = ReturnType<typeof createSiteObject>;
 
 let _client: PiggyClient | null = null;
-let _mode: BrowserMode = "tab";
+let _tabMode: TabMode = "tab";
 const _extraProcs: { socket: string; client: PiggyClient }[] = [];
 const _sites: Record<string, SiteObject> = {};
 
 const piggy: any = {
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
-  launch: async (opts?: { mode?: BrowserMode }) => {
-    _mode = opts?.mode ?? "tab";
-    await spawnBrowser();
+  launch: async (opts?: { mode?: TabMode; binary?: BinaryMode }) => {
+    _tabMode = opts?.mode ?? "tab";
+    const binaryMode: BinaryMode = opts?.binary ?? "headless";
+    await spawnBrowser(binaryMode);
     await new Promise(r => setTimeout(r, 500));
     _client = new PiggyClient();
     await _client.connect();
     setClient(_client);
-    logger.info(`[piggy] launched in "${_mode}" mode`);
+    logger.info(`[piggy] launched — tab mode: "${_tabMode}", binary: "${binaryMode}"`);
     return piggy;
   },
 
-  register: async (name: string, url: string, opts?: any) => {
+  register: async (name: string, url: string, opts?: { binary?: BinaryMode }) => {
     if (!url?.trim()) throw new Error(`No URL for site "${name}"`);
+    const binaryMode: BinaryMode = opts?.binary ?? "headless";
 
     let tabId = "default";
-    if (_mode === "tab") {
+    if (_tabMode === "tab") {
       tabId = await _client!.newTab();
       _sites[name] = createSiteObject(name, url, _client!, tabId);
       piggy[name] = _sites[name];
       logger.success(`[${name}] registered as tab ${tabId}`);
     } else {
       const socketName = `piggy_${name}`;
-      await spawnBrowserOnSocket(socketName);
+      await spawnBrowserOnSocket(socketName, binaryMode);
       await new Promise(r => setTimeout(r, 500));
       const c = new PiggyClient(socketName);
       await c.connect();
@@ -49,7 +51,6 @@ const piggy: any = {
       logger.success(`[${name}] registered as process on "${socketName}"`);
     }
 
-    if (opts?.mode) logger.info(`[${name}] mode: ${opts.mode}`);
     return piggy;
   },
 
@@ -61,7 +62,7 @@ const piggy: any = {
     return piggy;
   },
 
-  mode: (m: BrowserMode) => { _mode = m; return piggy; },
+  mode: (m: TabMode) => { _tabMode = m; return piggy; },
 
   // ── Elysia server ────────────────────────────────────────────────────────────
 

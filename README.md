@@ -7,24 +7,34 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/nothing-browser"><img src="https://img.shields.io/npm/v/nothing-browser" alt="npm version"/></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/ernest-tech-house-co-operation/nothing-browser" alt="license"/></a>
-  <a href="https://github.com/BunElysiaReact/nothing-browser/releases"><img src="https://img.shields.io/github/v/release/BunElysiaReact/nothing-browser" alt="binary releases"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/BunElysiaReact/nothing-browser" alt="license"/></a>
+  <a href="https://github.com/BunElysiaReact/nothing-browser/releases"><img src="https://img.shields.io/github/v/release/BunElysiaReact/nothing-browser" alt="releases"/></a>
 </p>
 
 ---
 
 A scraper-first headless browser library powered by the Nothing Browser Qt6/Chromium engine. Control real browser tabs, intercept network traffic, spoof fingerprints, capture WebSockets — all from Bun + TypeScript.
 
-> **Two repos:**
-> - This package (npm lib) → [ernest-tech-house-co-operation/nothing-browser](https://github.com/ernest-tech-house-co-operation/nothing-browser)
-> - Headless binary → [BunElysiaReact/nothing-browser](https://github.com/BunElysiaReact/nothing-browser/releases)
-
 ---
 
 ## Requirements
 
 - [Bun](https://bun.sh) ≥ 1.0
-- Nothing Browser headless binary (see below)
+- A Nothing Browser binary placed in your **project root** (see below)
+
+---
+
+## Binaries
+
+There are three binaries. All are downloaded from the same place — [GitHub Releases](https://github.com/BunElysiaReact/nothing-browser/releases).
+
+| Binary | What it is | Where it goes |
+|--------|-----------|---------------|
+| `nothing-browser` | Full UI browser app — DevTools, YouTube tab, Plugins, etc. | Install system-wide |
+| `nothing-browser-headless` | No window, no GPU. Runs as a background daemon for the scraping lib. | **Your project root** |
+| `nothing-browser-headful` | Visible browser window, script-controlled. Useful when a site needs a real display. | **Your project root** |
+
+The `nothingbrowser` npm/Bun lib talks to whichever binary is in your project root over a local socket. You pick headless or headful depending on your use case.
 
 ---
 
@@ -34,17 +44,38 @@ A scraper-first headless browser library powered by the Nothing Browser Qt6/Chro
 bun add nothing-browser
 ```
 
-Then download the **headless binary** for your platform from [BunElysiaReact/nothing-browser releases](https://github.com/BunElysiaReact/nothing-browser/releases) and place it in your project root.
+Then download the binary for your platform from [GitHub Releases](https://github.com/BunElysiaReact/nothing-browser/releases) and place it in your project root.
 
-**Linux**
+### Linux
+
+**Headless** (no visible window — most common for scraping)
 ```bash
 tar -xzf nothing-browser-headless-*-linux-x86_64.tar.gz
 chmod +x nothing-browser-headless
 ```
 
-**Windows** — extract the `.zip`, place `nothing-browser-headless.exe` in project root.
+**Headful** (visible window, script-controlled)
+```bash
+tar -xzf nothing-browser-headful-*-linux-x86_64.tar.gz
+chmod +x nothing-browser-headful
+```
 
-**macOS** — extract the `.tar.gz`, place `nothing-browser-headless` in project root.
+**Full browser** (system-wide install, for using the UI)
+```bash
+sudo dpkg -i nothing-browser_*_amd64.deb
+# or
+tar -xzf nothing-browser-*-linux-x86_64.tar.gz
+cd nothing-browser-*-linux-x86_64
+./nothing-browser
+```
+
+### Windows
+
+Download the `.zip` for your chosen binary → extract → place `nothing-browser-headless.exe` or `nothing-browser-headful.exe` in your project root. The JRE is bundled in the full browser zip.
+
+### macOS
+
+Download the `.tar.gz` for your chosen binary → extract → place the binary in your project root.
 
 ---
 
@@ -90,6 +121,24 @@ await piggy.launch({ mode: "process" });
 
 ---
 
+## Headless vs Headful
+
+**Headless** — no display needed, runs anywhere including CI. Use this by default.
+
+```
+nothing-browser-headless        ← in your project root
+```
+
+**Headful** — opens a real visible Chromium window that your script drives. Use this when a site detects headless mode or requires a real display (canvas fingerprinting, certain login flows, etc).
+
+```
+nothing-browser-headful         ← in your project root
+```
+
+Both binaries expose the exact same socket API. Switching is just swapping which binary is in your project root.
+
+---
+
 ## Examples
 
 ### Scrape a site and expose it as an API
@@ -130,8 +179,6 @@ piggy.books.api("/list", async (_params, query) => {
 
 piggy.books.noclose();
 await piggy.serve(3000);
-// GET http://localhost:3000/books/list
-// GET http://localhost:3000/books/list?page=2
 ```
 
 ---
@@ -170,8 +217,6 @@ piggy.books.api("/search", async (_params, query) => {
 
   return { query: query.q, count: books.length, books };
 }, { ttl: 120_000, before: [logMiddleware, authMiddleware] });
-
-// curl -H 'x-api-key: piggy-secret' 'http://localhost:3000/books/search?q=light'
 ```
 
 ---
@@ -181,11 +226,11 @@ piggy.books.api("/search", async (_params, query) => {
 ```ts
 await piggy.books.capture.clear();
 await piggy.books.capture.start();
-await piggy.books.wait(300); // ensure capture is active before nav
+await piggy.books.wait(300);
 
 await piggy.books.navigate("https://books.toscrape.com");
 await piggy.books.waitForSelector("body", 10000);
-await piggy.books.wait(2000); // let async XHR/fetch calls settle
+await piggy.books.wait(2000);
 
 await piggy.books.capture.stop();
 
@@ -206,13 +251,11 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 
 const SESSION_FILE = "./session.json";
 
-// Restore on startup
 if (existsSync(SESSION_FILE)) {
   const saved = JSON.parse(readFileSync(SESSION_FILE, "utf8"));
   await piggy.books.session.import(saved);
 }
 
-// Save on shutdown — always BEFORE piggy.close()
 process.on("SIGINT", async () => {
   const session = await piggy.books.session.export();
   writeFileSync(SESSION_FILE, JSON.stringify(session, null, 2));
@@ -233,8 +276,6 @@ await piggy.books.type("#search", "mystery novels");
 await piggy.books.scroll.by(400);
 ```
 
-Affects: `click`, `type`, `hover`, `scroll.by`, `wait`.
-
 ---
 
 ### Screenshot / PDF
@@ -243,7 +284,6 @@ Affects: `click`, `type`, `hover`, `scroll.by`, `wait`.
 await piggy.books.screenshot("./out/page.png");
 await piggy.books.pdf("./out/page.pdf");
 
-// or base64
 const b64 = await piggy.books.screenshot();
 ```
 
@@ -256,8 +296,7 @@ await piggy.register("site1", "https://example.com");
 await piggy.register("site2", "https://example.org");
 
 const titles = await piggy.all([piggy.site1, piggy.site2]).title();
-
-const h1s = await piggy.diff([piggy.site1, piggy.site2]).fetchText("h1");
+const h1s    = await piggy.diff([piggy.site1, piggy.site2]).fetchText("h1");
 // → { site1: "...", site2: "..." }
 ```
 
@@ -272,7 +311,7 @@ const h1s = await piggy.diff([piggy.site1, piggy.site2]).fetchText("h1");
 | `mode` | `"tab" \| "process"` | `"tab"` |
 
 ### `piggy.register(name, url)`
-Registers a site. Accessible as `piggy.<n>` after registration.
+Registers a site. Accessible as `piggy.<name>` after registration.
 
 ### `piggy.actHuman(enable)`
 Toggles human-like interaction timing globally.
@@ -357,17 +396,17 @@ site.screenshot(filePath?) / site.pdf(filePath?)
 
 ## Binary download
 
-| Platform | File |
-|----------|------|
-| Linux x86_64 (deb) | `nothing-browser-headless_*_amd64.deb` |
-| Linux x86_64 (tar.gz) | `nothing-browser-headless-*-linux-x86_64.tar.gz` |
-| Windows x64 | `nothing-browser-headless-*.zip` |
-| macOS | `nothing-browser-headless-*.tar.gz` |
+| Platform | Headless | Headful | Full Browser |
+|----------|----------|---------|--------------|
+| Linux x86_64 (deb) | `nothing-browser-headless_*_amd64.deb` | `nothing-browser-headful_*_amd64.deb` | `nothing-browser_*_amd64.deb` |
+| Linux x86_64 (tar.gz) | `nothing-browser-headless-*-linux-x86_64.tar.gz` | `nothing-browser-headful-*-linux-x86_64.tar.gz` | `nothing-browser-*-linux-x86_64.tar.gz` |
+| Windows x64 | `nothing-browser-headless-*-windows-x64.zip` | `nothing-browser-headful-*-windows-x64.zip` | `nothing-browser-*-windows-x64.zip` |
+| macOS | `nothing-browser-headless-*-macos.tar.gz` | `nothing-browser-headful-*-macos.tar.gz` | `nothing-browser-*-macos.dmg` |
 
-→ [BunElysiaReact/nothing-browser releases](https://github.com/BunElysiaReact/nothing-browser/releases)
+→ [All releases](https://github.com/BunElysiaReact/nothing-browser/releases)
 
 ---
 
 ## License
 
-MIT © [Ernest Tech House](https://github.com/ernest-tech-house-co-operation)
+MIT © [Ernest Tech House](https://github.com/BunElysiaReact/nothing-browser)

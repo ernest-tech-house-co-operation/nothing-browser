@@ -1,6 +1,6 @@
 {
   "name": "nothing-browser",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Scraper-first headless browser library — control real tabs, intercept network traffic, capture WebSockets, spoof fingerprints. Powered by Qt6/Chromium.",
   "module": "piggy.ts",
   "main": "piggy.ts",
