@@ -6274,6 +6274,7 @@ class PiggyClient {
   buf = "";
   eventBuffer = "";
   eventHandlers = new Map;
+  globalEventHandlers = new Map;
   constructor(socketPath = SOCKET_PATH) {
     this.socketPath = socketPath;
     this.eventHandlers.set("default", new Map);
@@ -6332,23 +6333,20 @@ class PiggyClient {
       const handlers = this.eventHandlers.get(effectiveTabId);
       const handler = handlers?.get(name);
       if (handler) {
-        Promise.resolve(handler(JSON.parse(data || "null"))).then((response) => {
+        let parsedData;
+        try {
+          parsedData = JSON.parse(data || "null");
+        } catch {
+          parsedData = data;
+        }
+        Promise.resolve(handler(parsedData)).then((response) => {
           if (response && typeof response === "object" && "success" in response) {
-            if (response.success) {
-              this.send("exposed.result", {
-                tabId: effectiveTabId,
-                callId,
-                result: JSON.stringify(response.result),
-                isError: false
-              }).catch((e) => logger_default.error(`Failed to send exposed result: ${e}`));
-            } else {
-              this.send("exposed.result", {
-                tabId: effectiveTabId,
-                callId,
-                result: response.error || "Unknown error",
-                isError: true
-              }).catch((e) => logger_default.error(`Failed to send exposed error: ${e}`));
-            }
+            this.send("exposed.result", {
+              tabId: effectiveTabId,
+              callId,
+              result: response.success ? JSON.stringify(response.result) : response.error || "Unknown error",
+              isError: !response.success
+            }).catch((e) => logger_default.error(`Failed to send exposed result: ${e}`));
           } else {
             this.send("exposed.result", {
               tabId: effectiveTabId,
@@ -6368,7 +6366,37 @@ class PiggyClient {
       } else {
         logger_default.warn(`No handler for exposed function: ${name} in tab ${effectiveTabId}`);
       }
+      return;
     }
+    if (event.event === "navigate") {
+      const handlers = this.globalEventHandlers.get(`navigate:${event.tabId}`);
+      if (handlers) {
+        for (const h of handlers) {
+          try {
+            h(event.url);
+          } catch (e) {
+            logger_default.error(`navigate handler error: ${e}`);
+          }
+        }
+      }
+      const wildcard = this.globalEventHandlers.get("navigate:*");
+      if (wildcard) {
+        for (const h of wildcard) {
+          try {
+            h({ url: event.url, tabId: event.tabId });
+          } catch {}
+        }
+      }
+      return;
+    }
+  }
+  onEvent(eventName, tabId, handler) {
+    const key = `${eventName}:${tabId}`;
+    if (!this.globalEventHandlers.has(key)) {
+      this.globalEventHandlers.set(key, new Set);
+    }
+    this.globalEventHandlers.get(key).add(handler);
+    return () => this.globalEventHandlers.get(key)?.delete(handler);
   }
   disconnect() {
     this.socket?.destroy();
@@ -6551,15 +6579,13 @@ class PiggyClient {
     await this.send("session.import", { data, tabId });
   }
   async exposeFunction(name, handler, tabId = "default") {
-    if (!this.eventHandlers.has(tabId)) {
+    if (!this.eventHandlers.has(tabId))
       this.eventHandlers.set(tabId, new Map);
-    }
     this.eventHandlers.get(tabId).set(name, async (data) => {
       try {
         const result = await handler(data);
-        if (result && typeof result === "object" && (("success" in result) || ("error" in result))) {
+        if (result && typeof result === "object" && (("success" in result) || ("error" in result)))
           return result;
-        }
         return { success: true, result };
       } catch (err) {
         return { success: false, error: err.message || String(err) };
@@ -21191,6 +21217,139 @@ function humanTypeSequence(text) {
   return actions;
 }
 
+// piggy/intercept/scripts.ts
+function buildRespondScript(pattern, status2, contentType, body) {
+  const safePattern = pattern.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  const safeBody = body.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+  const safeContentType = contentType.replace(/'/g, "\\'");
+  return `
+(function() {
+  'use strict';
+  if (!window.__PIGGY_RESPOND_RULES__) window.__PIGGY_RESPOND_RULES__ = [];
+  window.__PIGGY_RESPOND_RULES__.push({
+    pattern: '${safePattern}',
+    status: ${status2},
+    contentType: '${safeContentType}',
+    body: \`${safeBody}\`
+  });
+
+  function _piggyMatchUrl(url, pattern) {
+    try { return url.includes(pattern) || new RegExp(pattern).test(url); }
+    catch { return url.includes(pattern); }
+  }
+
+  // Only install wrappers once per page
+  if (window.__PIGGY_RESPOND_INSTALLED__) return;
+  window.__PIGGY_RESPOND_INSTALLED__ = true;
+
+  // ── fetch wrapper ──────────────────────────────────────────────────────────
+  const _origFetch = window.fetch;
+  window.fetch = function(input, init) {
+    const url = typeof input === 'string' ? input : (input?.url ?? String(input));
+    const rules = window.__PIGGY_RESPOND_RULES__ || [];
+    for (const rule of rules) {
+      if (_piggyMatchUrl(url, rule.pattern)) {
+        return Promise.resolve(new Response(rule.body, {
+          status: rule.status,
+          headers: { 'Content-Type': rule.contentType }
+        }));
+      }
+    }
+    return _origFetch.apply(this, arguments);
+  };
+
+  // ── XHR wrapper ────────────────────────────────────────────────────────────
+  const _origOpen = XMLHttpRequest.prototype.open;
+  const _origSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function(method, url) {
+    this.__piggy_url__ = String(url);
+    return _origOpen.apply(this, arguments);
+  };
+
+  XMLHttpRequest.prototype.send = function() {
+    const url = this.__piggy_url__ || '';
+    const rules = window.__PIGGY_RESPOND_RULES__ || [];
+    for (const rule of rules) {
+      if (_piggyMatchUrl(url, rule.pattern)) {
+        const self = this;
+        Object.defineProperty(self, 'readyState',   { get: () => 4,            configurable: true });
+        Object.defineProperty(self, 'status',       { get: () => rule.status,  configurable: true });
+        Object.defineProperty(self, 'responseText', { get: () => rule.body,    configurable: true });
+        Object.defineProperty(self, 'response',     { get: () => rule.body,    configurable: true });
+        setTimeout(() => {
+          if (typeof self.onreadystatechange === 'function') self.onreadystatechange();
+          self.dispatchEvent(new Event('readystatechange'));
+          self.dispatchEvent(new Event('load'));
+          self.dispatchEvent(new Event('loadend'));
+        }, 0);
+        return;
+      }
+    }
+    return _origSend.apply(this, arguments);
+  };
+})();
+`;
+}
+function buildModifyResponseScript(pattern, exposedFnName) {
+  const safePattern = pattern.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  const safeFnName = exposedFnName.replace(/'/g, "\\'");
+  return `
+(function() {
+  'use strict';
+  if (!window.__PIGGY_MODIFY_RULES__) window.__PIGGY_MODIFY_RULES__ = [];
+  window.__PIGGY_MODIFY_RULES__.push({ pattern: '${safePattern}', fn: '${safeFnName}' });
+
+  function _piggyMatchUrl(url, pattern) {
+    try { return url.includes(pattern) || new RegExp(pattern).test(url); }
+    catch { return url.includes(pattern); }
+  }
+
+  // Only install wrappers once per page
+  if (window.__PIGGY_MODIFY_INSTALLED__) return;
+  window.__PIGGY_MODIFY_INSTALLED__ = true;
+
+  const _origFetch = window.fetch;
+  window.fetch = async function(input, init) {
+    const url = typeof input === 'string' ? input : (input?.url ?? String(input));
+    const rules = window.__PIGGY_MODIFY_RULES__ || [];
+
+    let matchedFn = null;
+    for (const rule of rules) {
+      if (_piggyMatchUrl(url, rule.pattern)) { matchedFn = rule.fn; break; }
+    }
+
+    // No match — pass through untouched
+    const resp = await _origFetch.apply(this, arguments);
+    if (!matchedFn) return resp;
+
+    try {
+      const bodyText = await resp.clone().text();
+      const headers  = {};
+      resp.headers.forEach((v, k) => { headers[k] = v; });
+
+      const handlerFn = window[matchedFn];
+      if (typeof handlerFn !== 'function') return resp;
+
+      // Call Node.js handler via exposeFunction bridge
+      const mod = await handlerFn({ body: bodyText, status: resp.status, headers });
+      if (!mod || typeof mod !== 'object' || Object.keys(mod).length === 0) return resp;
+
+      return new Response(
+        mod.body    !== undefined ? mod.body    : bodyText,
+        {
+          status:  mod.status  !== undefined ? mod.status  : resp.status,
+          headers: mod.headers !== undefined ? mod.headers : headers,
+        }
+      );
+    } catch {
+      return resp; // On any error, pass through original response
+    }
+  };
+})();
+`;
+}
+
 // piggy/register/index.ts
 var globalClient = null;
 var humanMode = false;
@@ -21217,6 +21376,20 @@ async function retry(label, fn, retries = 2, backoff = 150) {
 }
 function createSiteObject(name, registeredUrl, client, tabId) {
   let _currentUrl = registeredUrl;
+  const _eventListeners = new Map;
+  const _unsubNavigate = client.onEvent("navigate", tabId, (url) => {
+    _currentUrl = url;
+    const handlers = _eventListeners.get("navigate");
+    if (handlers) {
+      for (const h of handlers) {
+        try {
+          h(url);
+        } catch (e) {
+          logger_default.error(`[${name}] navigate handler error: ${e}`);
+        }
+      }
+    }
+  });
   const withErrScreen = async (fn, label) => {
     try {
       return await fn();
@@ -21231,6 +21404,7 @@ function createSiteObject(name, registeredUrl, client, tabId) {
       throw err;
     }
   };
+  let _modifyRuleCounter = 0;
   const site = {
     _name: name,
     _tabId: tabId,
@@ -21268,6 +21442,19 @@ function createSiteObject(name, registeredUrl, client, tabId) {
       await client.addInitScript(code, tabId);
       logger_default.success(`[${name}] init script added`);
       return site;
+    },
+    on: (event, handler) => {
+      if (!_eventListeners.has(event))
+        _eventListeners.set(event, new Set);
+      _eventListeners.get(event).add(handler);
+      logger_default.debug(`[${name}] on('${event}') registered`);
+      return () => {
+        _eventListeners.get(event)?.delete(handler);
+        logger_default.debug(`[${name}] on('${event}') unsubscribed`);
+      };
+    },
+    off: (event, handler) => {
+      _eventListeners.get(event)?.delete(handler);
     },
     click: (selector, opts) => withErrScreen(() => retry(name, async () => {
       if (humanMode)
@@ -21402,6 +21589,86 @@ function createSiteObject(name, registeredUrl, client, tabId) {
         await client.addInterceptRule("modifyHeaders", pattern, { headers }, tabId);
         logger_default.info(`[${name}] intercept modifyHeaders: ${pattern}`);
       },
+      respond: async (pattern, handlerOrResponse) => {
+        const isStatic = typeof handlerOrResponse === "object";
+        const response = isStatic ? handlerOrResponse : { status: 200, contentType: "application/json", body: "" };
+        if (!isStatic) {
+          const fnName = `__piggy_respond_${name}_${++_modifyRuleCounter}__`;
+          await client.exposeFunction(fnName, async (req) => {
+            try {
+              const result = handlerOrResponse(req);
+              return {
+                success: true,
+                result: {
+                  status: result.status ?? 200,
+                  contentType: result.contentType ?? "application/json",
+                  body: result.body ?? ""
+                }
+              };
+            } catch (e) {
+              return { success: false, error: e.message };
+            }
+          }, tabId);
+          const dynamicScript = `
+(function() {
+  'use strict';
+  if (!window.__PIGGY_DYNAMIC_RESPOND__) window.__PIGGY_DYNAMIC_RESPOND__ = [];
+  window.__PIGGY_DYNAMIC_RESPOND__.push({ pattern: ${JSON.stringify(pattern)}, fn: ${JSON.stringify(fnName)} });
+
+  function matchUrl(url, pattern) {
+    try { return url.includes(pattern) || new RegExp(pattern).test(url); }
+    catch { return url.includes(pattern); }
+  }
+
+  if (window.__PIGGY_DYN_INSTALLED__) return;
+  window.__PIGGY_DYN_INSTALLED__ = true;
+
+  const _origFetch = window.fetch;
+  window.fetch = async function(input, init) {
+    const url = typeof input === 'string' ? input : (input?.url ?? String(input));
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const rules = window.__PIGGY_DYNAMIC_RESPOND__ || [];
+    for (const rule of rules) {
+      if (matchUrl(url, rule.pattern) && typeof window[rule.fn] === 'function') {
+        try {
+          const r = await window[rule.fn]({ url, method });
+          return new Response(r.body ?? '', {
+            status: r.status ?? 200,
+            headers: { 'Content-Type': r.contentType ?? 'application/json' }
+          });
+        } catch { break; }
+      }
+    }
+    return _origFetch.apply(this, arguments);
+  };
+})();`;
+          await client.addInitScript(dynamicScript, tabId);
+          await client.evaluate(dynamicScript, tabId);
+          logger_default.success(`[${name}] intercept.respond (dynamic): ${pattern}`);
+          return site;
+        }
+        const script = buildRespondScript(pattern, response.status ?? 200, response.contentType ?? "application/json", response.body);
+        await client.addInitScript(script, tabId);
+        await client.evaluate(script, tabId);
+        logger_default.success(`[${name}] intercept.respond (static): ${pattern} → ${response.status ?? 200}`);
+        return site;
+      },
+      modifyResponse: async (pattern, handler) => {
+        const fnName = `__piggy_modres_${name}_${++_modifyRuleCounter}__`;
+        await client.exposeFunction(fnName, async (response) => {
+          try {
+            const mod = await handler(response);
+            return { success: true, result: mod ?? {} };
+          } catch (e) {
+            return { success: false, error: e.message };
+          }
+        }, tabId);
+        const script = buildModifyResponseScript(pattern, fnName);
+        await client.addInitScript(script, tabId);
+        await client.evaluate(script, tabId);
+        logger_default.success(`[${name}] intercept.modifyResponse: ${pattern}`);
+        return site;
+      },
       clear: async () => {
         await client.clearInterceptRules(tabId);
         logger_default.info(`[${name}] intercept rules cleared`);
@@ -21480,6 +21747,7 @@ function createSiteObject(name, registeredUrl, client, tabId) {
       return site;
     },
     close: async () => {
+      _unsubNavigate();
       keepAliveSites.delete(name);
       if (tabId !== "default") {
         await client.closeTab(tabId);

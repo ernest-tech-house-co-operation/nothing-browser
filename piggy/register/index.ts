@@ -3,6 +3,7 @@ import { PiggyClient } from "../client";
 import logger from "../logger";
 import { routeRegistry, keepAliveSites, type RouteHandler, type BeforeMiddleware } from "../server";
 import { randomDelay, humanTypeSequence } from "../human";
+import { buildRespondScript, buildModifyResponseScript } from "../intercept/scripts";
 
 let globalClient: PiggyClient | null = null;
 export let humanMode = false;
@@ -27,6 +28,20 @@ async function retry<T>(label: string, fn: () => Promise<T>, retries = 2, backof
 export function createSiteObject(name: string, registeredUrl: string, client: PiggyClient, tabId: string) {
   let _currentUrl: string = registeredUrl;
 
+  // ── Event listeners store ──────────────────────────────────────────────────
+  const _eventListeners = new Map<string, Set<(data: any) => void>>();
+
+  // Wire the client-level navigate event into site-level listeners
+  const _unsubNavigate = client.onEvent("navigate", tabId, (url: string) => {
+    _currentUrl = url;
+    const handlers = _eventListeners.get("navigate");
+    if (handlers) {
+      for (const h of handlers) {
+        try { h(url); } catch (e) { logger.error(`[${name}] navigate handler error: ${e}`); }
+      }
+    }
+  });
+
   const withErrScreen = async <T>(fn: () => Promise<T>, label: string): Promise<T> => {
     try { return await fn(); } catch (err: any) {
       const p = `./error-${name}-${Date.now()}.png`;
@@ -35,6 +50,9 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
       throw err;
     }
   };
+
+  // ── Intercept helper: unique fn name per pattern ───────────────────────────
+  let _modifyRuleCounter = 0;
 
   const site: any = {
     _name: name,
@@ -75,13 +93,29 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
     waitForVisible:  (selector: string, timeout = 30000) => client.waitForSelector(selector, timeout, tabId),
     waitForResponse: (pattern: string, timeout = 30000)  => client.waitForResponse(pattern, timeout, tabId),
 
-    // ── Init Script ─────────────────────────────────────────────────────────────
-    // HERE IT IS - ADD THIS METHOD TO THE SITE OBJECT
+    // ── Init Script ────────────────────────────────────────────────────────────
     addInitScript: async (js: string | (() => void)) => {
       const code = typeof js === 'function' ? `(${js.toString()})();` : js;
       await client.addInitScript(code, tabId);
       logger.success(`[${name}] init script added`);
       return site;
+    },
+
+    // ── Event emitter ──────────────────────────────────────────────────────────
+    // Usage: site.on('navigate', url => console.log('went to', url))
+    // Returns unsubscribe function
+    on: (event: string, handler: (data: any) => void): (() => void) => {
+      if (!_eventListeners.has(event)) _eventListeners.set(event, new Set());
+      _eventListeners.get(event)!.add(handler);
+      logger.debug(`[${name}] on('${event}') registered`);
+      return () => {
+        _eventListeners.get(event)?.delete(handler);
+        logger.debug(`[${name}] on('${event}') unsubscribed`);
+      };
+    },
+
+    off: (event: string, handler: (data: any) => void) => {
+      _eventListeners.get(event)?.delete(handler);
     },
 
     // ── Interactions ───────────────────────────────────────────────────────────
@@ -222,14 +256,151 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
         await client.addInterceptRule("block", pattern, {}, tabId);
         logger.info(`[${name}] intercept block: ${pattern}`);
       },
+
       redirect: async (pattern: string, redirectUrl: string) => {
         await client.addInterceptRule("redirect", pattern, { redirectUrl }, tabId);
         logger.info(`[${name}] intercept redirect: ${pattern} → ${redirectUrl}`);
       },
+
       headers: async (pattern: string, headers: Record<string, string>) => {
         await client.addInterceptRule("modifyHeaders", pattern, { headers }, tabId);
         logger.info(`[${name}] intercept modifyHeaders: ${pattern}`);
       },
+
+      // ── NEW: intercept.respond ──────────────────────────────────────────────
+      // Intercepts matching requests and returns a fake response — request never
+      // leaves the browser. Works for both fetch and XHR via JS injection.
+      //
+      // Usage:
+      //   await site.intercept.respond('/api/prices', (req) => ({
+      //     status: 200,
+      //     contentType: 'application/json',
+      //     body: JSON.stringify({ price: 99 })
+      //   }))
+      //
+      //   // Static shorthand:
+      //   await site.intercept.respond('/api/prices', {
+      //     status: 200, contentType: 'application/json', body: '{"price":99}'
+      //   })
+      respond: async (
+        pattern: string,
+        handlerOrResponse:
+          | { status?: number; contentType?: string; body: string }
+          | ((req: { url: string; method: string }) => { status?: number; contentType?: string; body: string })
+      ) => {
+        // Static response — just inject the JS rule directly
+        const isStatic = typeof handlerOrResponse === "object";
+        const response = isStatic
+          ? handlerOrResponse
+          : { status: 200, contentType: "application/json", body: "" };
+
+        if (!isStatic) {
+          // Dynamic: expose a function, call it from the injected script
+          const fnName = `__piggy_respond_${name}_${++_modifyRuleCounter}__`;
+
+          await client.exposeFunction(fnName, async (req: { url: string; method: string }) => {
+            try {
+              const result = (handlerOrResponse as Function)(req);
+              return {
+                success: true,
+                result: {
+                  status:      result.status      ?? 200,
+                  contentType: result.contentType ?? "application/json",
+                  body:        result.body        ?? "",
+                }
+              };
+            } catch (e: any) {
+              return { success: false, error: e.message };
+            }
+          }, tabId);
+
+          // Inject a script that calls the exposed function instead of static body
+          const dynamicScript = `
+(function() {
+  'use strict';
+  if (!window.__PIGGY_DYNAMIC_RESPOND__) window.__PIGGY_DYNAMIC_RESPOND__ = [];
+  window.__PIGGY_DYNAMIC_RESPOND__.push({ pattern: ${JSON.stringify(pattern)}, fn: ${JSON.stringify(fnName)} });
+
+  function matchUrl(url, pattern) {
+    try { return url.includes(pattern) || new RegExp(pattern).test(url); }
+    catch { return url.includes(pattern); }
+  }
+
+  if (window.__PIGGY_DYN_INSTALLED__) return;
+  window.__PIGGY_DYN_INSTALLED__ = true;
+
+  const _origFetch = window.fetch;
+  window.fetch = async function(input, init) {
+    const url = typeof input === 'string' ? input : (input?.url ?? String(input));
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const rules = window.__PIGGY_DYNAMIC_RESPOND__ || [];
+    for (const rule of rules) {
+      if (matchUrl(url, rule.pattern) && typeof window[rule.fn] === 'function') {
+        try {
+          const r = await window[rule.fn]({ url, method });
+          return new Response(r.body ?? '', {
+            status: r.status ?? 200,
+            headers: { 'Content-Type': r.contentType ?? 'application/json' }
+          });
+        } catch { break; }
+      }
+    }
+    return _origFetch.apply(this, arguments);
+  };
+})();`;
+          await client.addInitScript(dynamicScript, tabId);
+          await client.evaluate(dynamicScript, tabId);
+          logger.success(`[${name}] intercept.respond (dynamic): ${pattern}`);
+          return site;
+        }
+
+        // Static path: inject the JS intercept rule
+        const script = buildRespondScript(
+          pattern,
+          response.status      ?? 200,
+          response.contentType ?? "application/json",
+          response.body
+        );
+        await client.addInitScript(script, tabId);
+        await client.evaluate(script, tabId);
+        logger.success(`[${name}] intercept.respond (static): ${pattern} → ${response.status ?? 200}`);
+        return site;
+      },
+
+      // ── NEW: intercept.modifyResponse ───────────────────────────────────────
+      // Lets the request hit the network, then calls your handler with the
+      // response. Return { body?, status?, headers? } to modify, or {} to
+      // pass through unchanged.
+      //
+      // Usage:
+      //   await site.intercept.modifyResponse('/api/feed', async ({ body, status }) => {
+      //     const data = JSON.parse(body)
+      //     data.items = data.items.slice(0, 5)
+      //     return { body: JSON.stringify(data) }
+      //   })
+      modifyResponse: async (
+        pattern: string,
+        handler: (response: { body: string; status: number; headers: Record<string, string> }) =>
+          Promise<{ body?: string; status?: number; headers?: Record<string, string> } | void> | void
+      ) => {
+        const fnName = `__piggy_modres_${name}_${++_modifyRuleCounter}__`;
+
+        await client.exposeFunction(fnName, async (response: { body: string; status: number; headers: Record<string, string> }) => {
+          try {
+            const mod = await handler(response);
+            return { success: true, result: mod ?? {} };
+          } catch (e: any) {
+            return { success: false, error: e.message };
+          }
+        }, tabId);
+
+        const script = buildModifyResponseScript(pattern, fnName);
+        await client.addInitScript(script, tabId);
+        await client.evaluate(script, tabId);
+        logger.success(`[${name}] intercept.modifyResponse: ${pattern}`);
+        return site;
+      },
+
       clear: async () => {
         await client.clearInterceptRules(tabId);
         logger.info(`[${name}] intercept rules cleared`);
@@ -238,35 +409,19 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
 
     // ── Network capture ────────────────────────────────────────────────────────
     capture: {
-      start: async () => {
-        await client.captureStart(tabId);
-        logger.info(`[${name}] capture started`);
-      },
-      stop: async () => {
-        await client.captureStop(tabId);
-        logger.info(`[${name}] capture stopped`);
-      },
+      start: async () => { await client.captureStart(tabId); logger.info(`[${name}] capture started`); },
+      stop:  async () => { await client.captureStop(tabId);  logger.info(`[${name}] capture stopped`); },
       requests: () => client.captureRequests(tabId),
       ws:       () => client.captureWs(tabId),
       cookies:  () => client.captureCookies(tabId),
       storage:  () => client.captureStorage(tabId),
-      clear: async () => {
-        await client.captureClear(tabId);
-        logger.info(`[${name}] capture cleared`);
-      },
+      clear: async () => { await client.captureClear(tabId); logger.info(`[${name}] capture cleared`); },
     },
 
     // ── Session ────────────────────────────────────────────────────────────────
     session: {
-      export: async () => {
-        const data = await client.sessionExport(tabId);
-        logger.success(`[${name}] session exported`);
-        return data;
-      },
-      import: async (data: any) => {
-        await client.sessionImport(data, tabId);
-        logger.success(`[${name}] session imported`);
-      },
+      export: async () => { const data = await client.sessionExport(tabId); logger.success(`[${name}] session exported`); return data; },
+      import: async (data: any) => { await client.sessionImport(data, tabId); logger.success(`[${name}] session imported`); },
     },
 
     // ── Expose Function ─────────────────────────────────────────────────────────
@@ -275,19 +430,16 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
       logger.success(`[${name}] exposed function: ${fnName}`);
       return site;
     },
-
     unexposeFunction: async (fnName: string) => {
       await client.unexposeFunction(fnName, tabId);
       logger.info(`[${name}] unexposed function: ${fnName}`);
       return site;
     },
-
     clearExposedFunctions: async () => {
       await client.clearExposedFunctions(tabId);
       logger.info(`[${name}] cleared all exposed functions`);
       return site;
     },
-
     exposeAndInject: async (fnName: string, handler: (data: any) => Promise<any> | any, injectionJs: string | ((fnName: string) => string)) => {
       await client.exposeFunction(fnName, handler, tabId);
       const js = typeof injectionJs === "function" ? injectionJs(fnName) : injectionJs;
@@ -299,10 +451,7 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
     // ── Elysia API ─────────────────────────────────────────────────────────────
     api: (path: string, handler: RouteHandler, opts?: { ttl?: number; before?: BeforeMiddleware[]; method?: "GET" | "POST" | "PUT" | "DELETE" }) => {
       const key = `${name}:${path}`;
-      if (routeRegistry.has(key)) {
-        logger.warn(`[${name}] route ${path} already registered`);
-        return site;
-      }
+      if (routeRegistry.has(key)) { logger.warn(`[${name}] route ${path} already registered`); return site; }
       routeRegistry.set(key, {
         path,
         method: opts?.method ?? "GET",
@@ -317,6 +466,7 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
     noclose: () => { keepAliveSites.add(name); logger.info(`[${name}] keep-alive`); return site; },
 
     close: async () => {
+      _unsubNavigate(); // Clean up navigate listener
       keepAliveSites.delete(name);
       if (tabId !== "default") {
         await client.closeTab(tabId);
@@ -333,12 +483,8 @@ export function createExposedAPI<T extends Record<string, (data: any) => any>>(s
     const { method, args } = call;
     const handler = handlers[method as keyof T];
     if (!handler) throw new Error(`Unknown method: ${method}`);
-    try {
-      return await handler(args);
-    } catch (err) {
-      logger.error(`[${site._name}] API error in ${method}:`, err);
-      throw err;
-    }
+    try { return await handler(args); }
+    catch (err) { logger.error(`[${site._name}] API error in ${method}:`, err); throw err; }
   };
   return site.exposeFunction(apiName, wrappedHandler);
 }

@@ -1,6 +1,6 @@
 {
   "name": "nothing-browser",
-  "version": "0.0.10",
+  "version": "0.0.12",
   "description": "Browser automation library powered by Nothing Browser",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -746,6 +746,7 @@ class PiggyClient {
   buf = "";
   eventBuffer = "";
   eventHandlers = new Map;
+  globalEventHandlers = new Map;
   constructor(socketPath = SOCKET_PATH) {
     this.socketPath = socketPath;
     this.eventHandlers.set("default", new Map);
@@ -804,23 +805,20 @@ class PiggyClient {
       const handlers = this.eventHandlers.get(effectiveTabId);
       const handler = handlers?.get(name);
       if (handler) {
-        Promise.resolve(handler(JSON.parse(data || "null"))).then((response) => {
+        let parsedData;
+        try {
+          parsedData = JSON.parse(data || "null");
+        } catch {
+          parsedData = data;
+        }
+        Promise.resolve(handler(parsedData)).then((response) => {
           if (response && typeof response === "object" && "success" in response) {
-            if (response.success) {
-              this.send("exposed.result", {
-                tabId: effectiveTabId,
-                callId,
-                result: JSON.stringify(response.result),
-                isError: false
-              }).catch((e) => logger_default.error(`Failed to send exposed result: ${e}`));
-            } else {
-              this.send("exposed.result", {
-                tabId: effectiveTabId,
-                callId,
-                result: response.error || "Unknown error",
-                isError: true
-              }).catch((e) => logger_default.error(`Failed to send exposed error: ${e}`));
-            }
+            this.send("exposed.result", {
+              tabId: effectiveTabId,
+              callId,
+              result: response.success ? JSON.stringify(response.result) : response.error || "Unknown error",
+              isError: !response.success
+            }).catch((e) => logger_default.error(`Failed to send exposed result: ${e}`));
           } else {
             this.send("exposed.result", {
               tabId: effectiveTabId,
@@ -840,7 +838,37 @@ class PiggyClient {
       } else {
         logger_default.warn(`No handler for exposed function: ${name} in tab ${effectiveTabId}`);
       }
+      return;
     }
+    if (event.event === "navigate") {
+      const handlers = this.globalEventHandlers.get(`navigate:${event.tabId}`);
+      if (handlers) {
+        for (const h of handlers) {
+          try {
+            h(event.url);
+          } catch (e) {
+            logger_default.error(`navigate handler error: ${e}`);
+          }
+        }
+      }
+      const wildcard = this.globalEventHandlers.get("navigate:*");
+      if (wildcard) {
+        for (const h of wildcard) {
+          try {
+            h({ url: event.url, tabId: event.tabId });
+          } catch {}
+        }
+      }
+      return;
+    }
+  }
+  onEvent(eventName, tabId, handler) {
+    const key = `${eventName}:${tabId}`;
+    if (!this.globalEventHandlers.has(key)) {
+      this.globalEventHandlers.set(key, new Set);
+    }
+    this.globalEventHandlers.get(key).add(handler);
+    return () => this.globalEventHandlers.get(key)?.delete(handler);
   }
   disconnect() {
     this.socket?.destroy();
@@ -1023,15 +1051,13 @@ class PiggyClient {
     await this.send("session.import", { data, tabId });
   }
   async exposeFunction(name, handler, tabId = "default") {
-    if (!this.eventHandlers.has(tabId)) {
+    if (!this.eventHandlers.has(tabId))
       this.eventHandlers.set(tabId, new Map);
-    }
     this.eventHandlers.get(tabId).set(name, async (data) => {
       try {
         const result = await handler(data);
-        if (result && typeof result === "object" && (("success" in result) || ("error" in result))) {
+        if (result && typeof result === "object" && (("success" in result) || ("error" in result)))
           return result;
-        }
         return { success: true, result };
       } catch (err) {
         return { success: false, error: err.message || String(err) };
