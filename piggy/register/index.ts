@@ -10,12 +10,7 @@ export let humanMode = false;
 export function setClient(c: PiggyClient | null) { globalClient = c; }
 export function setHumanMode(v: boolean) { humanMode = v; }
 
-async function retry<T>(
-  label: string,
-  fn: () => Promise<T>,
-  retries = 2,
-  backoff = 150
-): Promise<T> {
+async function retry<T>(label: string, fn: () => Promise<T>, retries = 2, backoff = 150): Promise<T> {
   let last!: Error;
   for (let i = 0; i <= retries; i++) {
     try { return await fn(); } catch (e: any) {
@@ -29,12 +24,7 @@ async function retry<T>(
   throw last;
 }
 
-export function createSiteObject(
-  name: string,
-  registeredUrl: string,
-  client: PiggyClient,
-  tabId: string
-) {
+export function createSiteObject(name: string, registeredUrl: string, client: PiggyClient, tabId: string) {
   let _currentUrl: string = registeredUrl;
 
   const withErrScreen = async <T>(fn: () => Promise<T>, label: string): Promise<T> => {
@@ -51,7 +41,6 @@ export function createSiteObject(
     _tabId: tabId,
 
     // ── Navigation ─────────────────────────────────────────────────────────────
-
     navigate: (url?: string, opts?: { retries?: number }) => {
       const target = url ?? registeredUrl;
       return retry(name, async () => {
@@ -86,8 +75,16 @@ export function createSiteObject(
     waitForVisible:  (selector: string, timeout = 30000) => client.waitForSelector(selector, timeout, tabId),
     waitForResponse: (pattern: string, timeout = 30000)  => client.waitForResponse(pattern, timeout, tabId),
 
-    // ── Interactions ───────────────────────────────────────────────────────────
+    // ── Init Script ─────────────────────────────────────────────────────────────
+    // HERE IT IS - ADD THIS METHOD TO THE SITE OBJECT
+    addInitScript: async (js: string | (() => void)) => {
+      const code = typeof js === 'function' ? `(${js.toString()})();` : js;
+      await client.addInitScript(code, tabId);
+      logger.success(`[${name}] init script added`);
+      return site;
+    },
 
+    // ── Interactions ───────────────────────────────────────────────────────────
     click: (selector: string, opts?: { retries?: number; timeout?: number }) =>
       withErrScreen(() =>
         retry(name, async () => {
@@ -173,7 +170,6 @@ export function createSiteObject(
     },
 
     // ── Fetch ──────────────────────────────────────────────────────────────────
-
     fetchText:   (selector: string) => client.fetchText(selector, tabId),
     fetchLinks:  async (selector: string) => {
       const links = await client.fetchLinks(selector, tabId);
@@ -192,7 +188,6 @@ export function createSiteObject(
     },
 
     // ── Screenshot / PDF ───────────────────────────────────────────────────────
-
     screenshot: async (filePath?: string) => {
       const r = await client.screenshot(filePath, tabId);
       logger.success(`[${name}] screenshot → ${filePath ?? "base64"}`);
@@ -208,11 +203,10 @@ export function createSiteObject(
     unblockImages: async () => { await client.unblockImages(tabId); logger.info(`[${name}] images unblocked`); },
 
     // ── Cookies ────────────────────────────────────────────────────────────────
-
     cookies: {
-      set: async (name: string, value: string, domain: string, path = "/") => {
-        await client.setCookie(name, value, domain, path, tabId);
-        logger.info(`[${name}] cookie set: ${name} @ ${domain}`);
+      set: async (cookieName: string, value: string, domain: string, path = "/") => {
+        await client.setCookie(cookieName, value, domain, path, tabId);
+        logger.info(`[${name}] cookie set: ${cookieName} @ ${domain}`);
       },
       get: (cookieName: string) => client.getCookie(cookieName, tabId),
       delete: async (cookieName: string) => {
@@ -223,7 +217,6 @@ export function createSiteObject(
     },
 
     // ── Interception ───────────────────────────────────────────────────────────
-
     intercept: {
       block: async (pattern: string) => {
         await client.addInterceptRule("block", pattern, {}, tabId);
@@ -244,7 +237,6 @@ export function createSiteObject(
     },
 
     // ── Network capture ────────────────────────────────────────────────────────
-
     capture: {
       start: async () => {
         await client.captureStart(tabId);
@@ -265,7 +257,6 @@ export function createSiteObject(
     },
 
     // ── Session ────────────────────────────────────────────────────────────────
-
     session: {
       export: async () => {
         const data = await client.sessionExport(tabId);
@@ -278,13 +269,35 @@ export function createSiteObject(
       },
     },
 
-    // ── Elysia API ─────────────────────────────────────────────────────────────
+    // ── Expose Function ─────────────────────────────────────────────────────────
+    exposeFunction: async (fnName: string, handler: (data: any) => Promise<any> | any) => {
+      await client.exposeFunction(fnName, handler, tabId);
+      logger.success(`[${name}] exposed function: ${fnName}`);
+      return site;
+    },
 
-    api: (
-      path: string,
-      handler: RouteHandler,
-      opts?: { ttl?: number; before?: BeforeMiddleware[]; method?: "GET" | "POST" | "PUT" | "DELETE" }
-    ) => {
+    unexposeFunction: async (fnName: string) => {
+      await client.unexposeFunction(fnName, tabId);
+      logger.info(`[${name}] unexposed function: ${fnName}`);
+      return site;
+    },
+
+    clearExposedFunctions: async () => {
+      await client.clearExposedFunctions(tabId);
+      logger.info(`[${name}] cleared all exposed functions`);
+      return site;
+    },
+
+    exposeAndInject: async (fnName: string, handler: (data: any) => Promise<any> | any, injectionJs: string | ((fnName: string) => string)) => {
+      await client.exposeFunction(fnName, handler, tabId);
+      const js = typeof injectionJs === "function" ? injectionJs(fnName) : injectionJs;
+      await client.evaluate(js, tabId);
+      logger.success(`[${name}] exposed and injected: ${fnName}`);
+      return site;
+    },
+
+    // ── Elysia API ─────────────────────────────────────────────────────────────
+    api: (path: string, handler: RouteHandler, opts?: { ttl?: number; before?: BeforeMiddleware[]; method?: "GET" | "POST" | "PUT" | "DELETE" }) => {
       const key = `${name}:${path}`;
       if (routeRegistry.has(key)) {
         logger.warn(`[${name}] route ${path} already registered`);
@@ -313,4 +326,19 @@ export function createSiteObject(
   };
 
   return site;
+}
+
+export function createExposedAPI<T extends Record<string, (data: any) => any>>(site: any, apiName: string, handlers: T): Promise<void> {
+  const wrappedHandler = async (call: any) => {
+    const { method, args } = call;
+    const handler = handlers[method as keyof T];
+    if (!handler) throw new Error(`Unknown method: ${method}`);
+    try {
+      return await handler(args);
+    } catch (err) {
+      logger.error(`[${site._name}] API error in ${method}:`, err);
+      throw err;
+    }
+  };
+  return site.exposeFunction(apiName, wrappedHandler);
 }

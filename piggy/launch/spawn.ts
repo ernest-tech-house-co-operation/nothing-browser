@@ -1,18 +1,30 @@
-import { spawn } from 'bun';
-import { execSync } from 'child_process';
-import { detectBinary, type BinaryMode } from './detect';
-import logger from '../logger';
+// piggy/launch/spawn.ts
+import { spawn as nodeSpawn } from "child_process";
+import { execSync } from "child_process";
+import { platform } from "os";
+import { detectBinary, type BinaryMode } from "./detect";
+import logger from "../logger";
 
 let activeProcess: any = null;
 const extraProcesses: any[] = [];
 
+// Runtime detection without importing "bun" at build time
+const isBun = typeof (globalThis as any).Bun !== 'undefined';
+
 export function killAllBrowsers(): void {
   try {
     logger.info('Cleaning up existing browser processes...');
-    execSync('pkill -f nothing-browser-headless 2>/dev/null || true', { stdio: 'ignore' });
-    execSync('pkill -f nothing-browser-headful 2>/dev/null || true', { stdio: 'ignore' });
-    execSync('pkill -f QtWebEngineProcess 2>/dev/null || true', { stdio: 'ignore' });
-    execSync('rm -f /tmp/piggy', { stdio: 'ignore' });
+    
+    if (platform() === 'win32') {
+      execSync('taskkill /F /IM nothing-browser-headless.exe 2>nul || true', { stdio: 'ignore' });
+      execSync('taskkill /F /IM nothing-browser-headful.exe 2>nul || true', { stdio: 'ignore' });
+      execSync('taskkill /F /IM QtWebEngineProcess.exe 2>nul || true', { stdio: 'ignore' });
+    } else {
+      execSync('pkill -f nothing-browser-headless 2>/dev/null || true', { stdio: 'ignore' });
+      execSync('pkill -f nothing-browser-headful 2>/dev/null || true', { stdio: 'ignore' });
+      execSync('pkill -f QtWebEngineProcess 2>/dev/null || true', { stdio: 'ignore' });
+      execSync('rm -f /tmp/piggy', { stdio: 'ignore' });
+    }
   } catch {
     // no processes to kill
   }
@@ -29,27 +41,54 @@ export async function spawnBrowser(mode: BinaryMode = 'headless'): Promise<strin
 
   logger.info(`Spawning Nothing Browser (${mode}) from: ${binaryPath}`);
 
-  activeProcess = spawn([binaryPath], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
-  });
+  if (isBun) {
+    // Bun runtime - use Bun.spawn
+    const Bun = (globalThis as any).Bun;
+    activeProcess = Bun.spawn([binaryPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+    });
 
-  if (activeProcess.stdout) {
-    const reader = activeProcess.stdout.getReader();
-    const read = async () => {
-      const { done, value } = await reader.read();
-      if (!done) {
-        logger.debug(`[Browser] ${new TextDecoder().decode(value)}`);
-        read();
-      }
-    };
-    read();
+    if (activeProcess.stdout) {
+      const reader = activeProcess.stdout.getReader();
+      const read = async () => {
+        const { done, value } = await reader.read();
+        if (!done) {
+          logger.debug(`[Browser] ${new TextDecoder().decode(value)}`);
+          read();
+        }
+      };
+      read();
+    }
+
+    activeProcess.exited.then((code: number | null) => {
+      logger.warn(`Browser process exited with code: ${code}`);
+      activeProcess = null;
+    });
+  } else {
+    // Node.js runtime
+    activeProcess = nodeSpawn(binaryPath, [], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+    });
+
+    if (activeProcess.stdout) {
+      activeProcess.stdout.on('data', (data: Buffer) => {
+        logger.debug(`[Browser] ${data.toString()}`);
+      });
+    }
+
+    if (activeProcess.stderr) {
+      activeProcess.stderr.on('data', (data: Buffer) => {
+        logger.debug(`[Browser Error] ${data.toString()}`);
+      });
+    }
+
+    activeProcess.on('exit', (code: number | null) => {
+      logger.warn(`Browser process exited with code: ${code}`);
+      activeProcess = null;
+    });
   }
-
-  activeProcess.exited.then((code: number | null) => {
-    logger.warn(`Browser process exited with code: ${code}`);
-    activeProcess = null;
-  });
 
   await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -73,16 +112,32 @@ export async function spawnBrowserOnSocket(
 
   logger.info(`Spawning browser (${mode}) on socket: ${socketName}`);
 
-  const proc = spawn([binaryPath], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, PIGGY_SOCKET: socketName },
-  });
+  if (isBun) {
+    // Bun runtime
+    const Bun = (globalThis as any).Bun;
+    const proc = Bun.spawn([binaryPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PIGGY_SOCKET: socketName },
+    });
 
-  extraProcesses.push(proc);
+    extraProcesses.push(proc);
 
-  proc.exited.then((code: number | null) => {
-    logger.warn(`Browser on socket ${socketName} exited with code: ${code}`);
-  });
+    proc.exited.then((code: number | null) => {
+      logger.warn(`Browser on socket ${socketName} exited with code: ${code}`);
+    });
+  } else {
+    // Node.js runtime
+    const proc = nodeSpawn(binaryPath, [], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PIGGY_SOCKET: socketName },
+    });
+
+    extraProcesses.push(proc);
+
+    proc.on('exit', (code: number | null) => {
+      logger.warn(`Browser on socket ${socketName} exited with code: ${code}`);
+    });
+  }
 
   await new Promise(resolve => setTimeout(resolve, 1000));
   logger.success(`Browser spawned (${mode}) on socket: ${socketName}`);
@@ -91,9 +146,20 @@ export async function spawnBrowserOnSocket(
 export function killBrowser(): void {
   if (activeProcess) {
     logger.info('Killing browser process...');
-    activeProcess.kill();
+    if (isBun) {
+      activeProcess.kill();
+    } else {
+      activeProcess.kill('SIGTERM');
+    }
     activeProcess = null;
   }
-  for (const proc of extraProcesses) proc.kill();
+  
+  for (const proc of extraProcesses) {
+    if (isBun) {
+      proc.kill();
+    } else {
+      proc.kill('SIGTERM');
+    }
+  }
   extraProcesses.length = 0;
 }

@@ -2,7 +2,12 @@
 import { connect, type Socket } from "net";
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
+import { platform } from "os";
 import logger from "../logger";
+
+const SOCKET_PATH = platform() === 'win32' 
+  ? '\\\\.\\pipe\\piggy'
+  : '/tmp/piggy';
 
 export class PiggyClient {
   private socketPath: string;
@@ -10,9 +15,12 @@ export class PiggyClient {
   private reqId = 0;
   private pending = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private buf = "";
+  private eventBuffer = "";
+  private eventHandlers = new Map<string, Map<string, (data: any) => Promise<any>>>();
 
-  constructor(socketPath = "/tmp/piggy") {
+  constructor(socketPath = SOCKET_PATH) {
     this.socketPath = socketPath;
+    this.eventHandlers.set("default", new Map());
   }
 
   connect(): Promise<void> {
@@ -28,13 +36,20 @@ export class PiggyClient {
       });
 
       sock.on("data", (chunk: string) => {
-        this.buf += chunk;
-        const lines = this.buf.split("\n");
-        this.buf = lines.pop()!;
+        this.eventBuffer += chunk;
+        const lines = this.eventBuffer.split("\n");
+        this.eventBuffer = lines.pop()!;
+        
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
             const msg = JSON.parse(line);
+            
+            if (msg.type === "event") {
+              this.handleEvent(msg);
+              continue;
+            }
+            
             const p = this.pending.get(msg.id);
             if (p) {
               this.pending.delete(msg.id);
@@ -57,6 +72,55 @@ export class PiggyClient {
         this.pending.clear();
       });
     });
+  }
+
+  private handleEvent(event: any) {
+    if (event.event === "exposed_call") {
+      const { tabId, name, callId, data } = event;
+      const effectiveTabId = tabId || "default";
+      const handlers = this.eventHandlers.get(effectiveTabId);
+      const handler = handlers?.get(name);
+      
+      if (handler) {
+        Promise.resolve(handler(JSON.parse(data || "null")))
+          .then(response => {
+            if (response && typeof response === "object" && "success" in response) {
+              if (response.success) {
+                this.send("exposed.result", {
+                  tabId: effectiveTabId,
+                  callId,
+                  result: JSON.stringify(response.result),
+                  isError: false
+                }).catch(e => logger.error(`Failed to send exposed result: ${e}`));
+              } else {
+                this.send("exposed.result", {
+                  tabId: effectiveTabId,
+                  callId,
+                  result: response.error || "Unknown error",
+                  isError: true
+                }).catch(e => logger.error(`Failed to send exposed error: ${e}`));
+              }
+            } else {
+              this.send("exposed.result", {
+                tabId: effectiveTabId,
+                callId,
+                result: JSON.stringify(response),
+                isError: false
+              }).catch(e => logger.error(`Failed to send exposed result: ${e}`));
+            }
+          })
+          .catch(err => {
+            this.send("exposed.result", {
+              tabId: effectiveTabId,
+              callId,
+              result: err.message || "Handler error",
+              isError: true
+            }).catch(e => logger.error(`Failed to send exposed error: ${e}`));
+          });
+      } else {
+        logger.warn(`No handler for exposed function: ${name} in tab ${effectiveTabId}`);
+      }
+    }
   }
 
   disconnect() {
@@ -123,6 +187,12 @@ export class PiggyClient {
 
   async evaluate(js: string, tabId = "default"): Promise<any> {
     return this.send("evaluate", { js, tabId });
+  }
+
+  // ── Init Script ───────────────────────────────────────────────────────────────
+  // HERE IT IS - ADD THIS METHOD TO THE CLIENT
+  async addInitScript(js: string, tabId = "default"): Promise<void> {
+    await this.send("addInitScript", { js, tabId });
   }
 
   // ── Interactions ──────────────────────────────────────────────────────────────
@@ -251,13 +321,7 @@ export class PiggyClient {
 
   // ── Cookies ───────────────────────────────────────────────────────────────────
 
-  async setCookie(
-    name: string,
-    value: string,
-    domain: string,
-    path = "/",
-    tabId = "default"
-  ): Promise<void> {
+  async setCookie(name: string, value: string, domain: string, path = "/", tabId = "default"): Promise<void> {
     await this.send("cookie.set", { name, value, domain, path, tabId });
   }
 
@@ -275,12 +339,7 @@ export class PiggyClient {
 
   // ── Interception ──────────────────────────────────────────────────────────────
 
-  async addInterceptRule(
-    action: "block" | "redirect" | "modifyHeaders",
-    pattern: string,
-    options: { redirectUrl?: string; headers?: Record<string, string> } = {},
-    tabId = "default"
-  ): Promise<void> {
+  async addInterceptRule(action: "block" | "redirect" | "modifyHeaders", pattern: string, options: { redirectUrl?: string; headers?: Record<string, string> } = {}, tabId = "default"): Promise<void> {
     await this.send("intercept.rule.add", { action, pattern, ...options, tabId });
   }
 
@@ -326,5 +385,37 @@ export class PiggyClient {
 
   async sessionImport(data: any, tabId = "default"): Promise<void> {
     await this.send("session.import", { data, tabId });
+  }
+
+  // ── Expose Function ───────────────────────────────────────────────────────────
+
+  async exposeFunction(name: string, handler: (data: any) => Promise<any> | any, tabId = "default"): Promise<void> {
+    if (!this.eventHandlers.has(tabId)) {
+      this.eventHandlers.set(tabId, new Map());
+    }
+    this.eventHandlers.get(tabId)!.set(name, async (data: any) => {
+      try {
+        const result = await handler(data);
+        if (result && typeof result === "object" && ("success" in result || "error" in result)) {
+          return result;
+        }
+        return { success: true, result };
+      } catch (err: any) {
+        return { success: false, error: err.message || String(err) };
+      }
+    });
+    await this.send("expose.function", { name, tabId });
+    logger.success(`[${tabId}] exposed function: ${name}`);
+  }
+
+  async unexposeFunction(name: string, tabId = "default"): Promise<void> {
+    const handlers = this.eventHandlers.get(tabId);
+    if (handlers) handlers.delete(name);
+    logger.info(`[${tabId}] unexposed function: ${name}`);
+  }
+
+  async clearExposedFunctions(tabId = "default"): Promise<void> {
+    this.eventHandlers.set(tabId, new Map());
+    logger.info(`[${tabId}] cleared all exposed functions`);
   }
 }

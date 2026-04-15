@@ -14,6 +14,7 @@ let _tabMode: TabMode = "tab";
 const _extraProcs: { socket: string; client: PiggyClient }[] = [];
 const _sites: Record<string, SiteObject> = {};
 
+// CREATE THE PIGGY OBJECT AS A PLAIN OBJECT - NOT A PROXY
 const piggy: any = {
   // ── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -35,9 +36,12 @@ const piggy: any = {
 
     let tabId = "default";
     if (_tabMode === "tab") {
-      tabId = await _client!.newTab();
-      _sites[name] = createSiteObject(name, url, _client!, tabId);
-      piggy[name] = _sites[name];
+      if (!_client) throw new Error("No client. Call piggy.launch() first.");
+      tabId = await _client.newTab();
+      // HERE IT IS - CREATE SITE OBJECT AND ASSIGN DIRECTLY
+      const siteObj = createSiteObject(name, url, _client, tabId);
+      _sites[name] = siteObj;
+      piggy[name] = siteObj;  // DIRECT ASSIGNMENT - NO PROXY
       logger.success(`[${name}] registered as tab ${tabId}`);
     } else {
       const socketName = `piggy_${name}`;
@@ -46,8 +50,9 @@ const piggy: any = {
       const c = new PiggyClient(socketName);
       await c.connect();
       _extraProcs.push({ socket: socketName, client: c });
-      _sites[name] = createSiteObject(name, url, c, "default");
-      piggy[name] = _sites[name];
+      const siteObj = createSiteObject(name, url, c, "default");
+      _sites[name] = siteObj;
+      piggy[name] = siteObj;  // DIRECT ASSIGNMENT - NO PROXY
       logger.success(`[${name}] registered as process on "${socketName}"`);
     }
 
@@ -63,6 +68,22 @@ const piggy: any = {
   },
 
   mode: (m: TabMode) => { _tabMode = m; return piggy; },
+
+  // ── Expose Function (global) ─────────────────────────────────────────────────
+
+  expose: async (name: string, handler: (data: any) => Promise<any> | any, tabId = "default") => {
+    if (!_client) throw new Error("No client. Call piggy.launch() first.");
+    await _client.exposeFunction(name, handler, tabId);
+    logger.success(`[piggy] exposed global function: ${name}`);
+    return piggy;
+  },
+
+  unexpose: async (name: string, tabId = "default") => {
+    if (!_client) throw new Error("No client. Call piggy.launch() first.");
+    await _client.unexposeFunction(name, tabId);
+    logger.info(`[piggy] unexposed function: ${name}`);
+    return piggy;
+  },
 
   // ── Elysia server ────────────────────────────────────────────────────────────
 
@@ -132,5 +153,6 @@ const piggy: any = {
   logger,
 };
 
+// NO PROXY WRAPPER - EXPORT THE PLAIN OBJECT DIRECTLY
 export default piggy;
 export { piggy };

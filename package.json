@@ -1,56 +1,68 @@
 {
   "name": "nothing-browser",
-  "version": "0.0.3",
-  "description": "Scraper-first headless browser library — control real tabs, intercept network traffic, capture WebSockets, spoof fingerprints. Powered by Qt6/Chromium.",
-  "module": "piggy.ts",
-  "main": "piggy.ts",
-  "type": "module",
+  "version": "0.0.10",
+  "description": "Browser automation library powered by Nothing Browser",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "import": "./piggy.ts",
-      "types": "./piggy.ts"
+
+  ".": {
+    "bun": "./piggy.ts",
+    "node": "./dist/piggy.js",
+    "default": "./dist/piggy.js"
+  },
+
+    "./register": {
+      "bun": "./piggy/register/index.ts",
+      "node": "./dist/register/index.js",
+      "types": "./dist/register/index.d.ts"
+    },
+    "./server": {
+      "bun": "./piggy/server/index.ts",
+      "node": "./dist/server/index.js",
+      "types": "./dist/server/index.d.ts"
+    },
+    "./logger": {
+      "bun": "./piggy/logger/index.ts",
+      "node": "./dist/logger/index.js",
+      "types": "./dist/logger/index.d.ts"
     }
   },
-  "keywords": [
-    "scraper",
-    "headless-browser",
-    "browser-automation",
-    "web-scraping",
-    "chromium",
-    "qt6",
-    "bun",
-    "elysia",
-    "websocket-capture",
-    "fingerprint-spoofing",
-    "network-interception"
-  ],
-  "author": "Ernest Tech House",
-  "license": "MIT",
-  "homepage": "https://github.com/ernest-tech-house-co-operation/nothing-browser#readme",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/ernest-tech-house-co-operation/nothing-browser.git"
-  },
-  "bugs": {
-    "url": "https://github.com/ernest-tech-house-co-operation/nothing-browser/issues"
-  },
-  "files": [
-    "piggy.ts",
-    "piggy/",
-    "README.md",
-    "LICENSE"
-  ],
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+  "scripts": {
+    "build": "bun build ./piggy.ts --outdir ./dist --target node && bun build ./piggy/client/index.ts --outdir ./dist/client --target node && bun build ./piggy/register/index.ts --outdir ./dist/register --target node && bun build ./piggy/server/index.ts --outdir ./dist/server --target node && bun build ./piggy/logger/index.ts --outdir ./dist/logger --target node && bun build ./piggy/launch/detect.ts --outdir ./dist/launch --target node && bun build ./piggy/launch/spawn.ts --outdir ./dist/launch --target node && bun build ./piggy/cache/memory.ts --outdir ./dist/cache --target node && bun build ./piggy/human/index.ts --outdir ./dist/human --target node",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "elysia": "^1.4.28",
-    "ernest-logger": "^2.0.4"
+    "elysia": "^1.0.0"
+  },
+  "peerDependencies": {
+    "elysia": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "bun-types": "latest",
+    "typescript": "^5.0.0"
   },
   "engines": {
+    "node": ">=18.0.0",
     "bun": ">=1.0.0"
-  }
+  },
+  "files": [
+    "dist",
+    "piggy.ts",
+    "piggy",
+    "README.md",
+    "nothing_browser_pig_pink.svg"
+  ],
+  "keywords": [
+    "browser",
+    "automation",
+    "headless",
+    "scraping",
+    "webdriver",
+    "chromium",
+    "nothing-browser"
+  ],
+  "author": "",
+  "license": "MIT"
 }
