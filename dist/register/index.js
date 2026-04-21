@@ -17252,7 +17252,7 @@ function createExposedAPI(site, apiName, handlers) {
     try {
       return await handler(args);
     } catch (err) {
-      logger_default.error(`[${site._name}] API error in ${method}:`, err);
+      logger_default.error(`[${site._name}] API error in ${method}: ${err}`);
       throw err;
     }
   };

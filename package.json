@@ -1,17 +1,30 @@
 {
   "name": "nothing-browser",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "Browser automation library powered by Nothing Browser",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-
-  ".": {
-    "bun": "./piggy.ts",
-    "node": "./dist/piggy.js",
-    "default": "./dist/piggy.js"
+  "homepage": "https://github.com/ernest-tech-house-co-operation/nothing-browser#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ernest-tech-house-co-operation/nothing-browser.git"
   },
-
+  "bugs": {
+    "url": "https://github.com/ernest-tech-house-co-operation/nothing-browser/issues"
+  },
+  "author": {
+    "name": "Pease Ernest",
+    "email": "pease@ernest.com",
+    "url": "https://github.com/ernest-tech-house-co-operation"
+  },
+  "license": "MIT",
+  "main": "./dist/piggy.js",
+  "types": "./dist/piggy.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./piggy.ts",
+      "node": "./dist/piggy.js",
+      "default": "./dist/piggy.js",
+      "types": "./dist/piggy.d.ts"
+    },
     "./register": {
       "bun": "./piggy/register/index.ts",
       "node": "./dist/register/index.js",
@@ -29,8 +42,11 @@
     }
   },
   "scripts": {
-    "build": "bun build ./piggy.ts --outdir ./dist --target node && bun build ./piggy/client/index.ts --outdir ./dist/client --target node && bun build ./piggy/register/index.ts --outdir ./dist/register --target node && bun build ./piggy/server/index.ts --outdir ./dist/server --target node && bun build ./piggy/logger/index.ts --outdir ./dist/logger --target node && bun build ./piggy/launch/detect.ts --outdir ./dist/launch --target node && bun build ./piggy/launch/spawn.ts --outdir ./dist/launch --target node && bun build ./piggy/cache/memory.ts --outdir ./dist/cache --target node && bun build ./piggy/human/index.ts --outdir ./dist/human --target node",
-    "prepublishOnly": "npm run build"
+    "clean": "rm -rf dist",
+    "build:types": "tsc --project tsconfig.json --emitDeclarationOnly --outDir dist",
+    "build:js": "bun build ./piggy.ts --outdir ./dist --target node && bun build ./piggy/client/index.ts --outdir ./dist/client --target node && bun build ./piggy/register/index.ts --outdir ./dist/register --target node && bun build ./piggy/server/index.ts --outdir ./dist/server --target node && bun build ./piggy/logger/index.ts --outdir ./dist/logger --target node && bun build ./piggy/launch/detect.ts --outdir ./dist/launch --target node && bun build ./piggy/launch/spawn.ts --outdir ./dist/launch --target node && bun build ./piggy/cache/memory.ts --outdir ./dist/cache --target node && bun build ./piggy/human/index.ts --outdir ./dist/human --target node",
+    "build": "bun run clean && bun run build:types && bun run build:js",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "elysia": "^1.0.0"
@@ -41,7 +57,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "bun-types": "latest",
-    "typescript": "^5.0.0"
+    "typescript": "^5.8.0"
   },
   "engines": {
     "node": ">=18.0.0",
@@ -62,7 +78,5 @@
     "webdriver",
     "chromium",
     "nothing-browser"
-  ],
-  "author": "",
-  "license": "MIT"
+  ]
 }

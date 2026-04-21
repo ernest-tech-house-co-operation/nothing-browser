@@ -4,17 +4,13 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "declaration": true,
-    "declarationMap": true,
     "emitDeclarationOnly": true,
     "outDir": "./dist",
-    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "allowJs": false,
-    "resolveJsonModule": true,
-    "isolatedModules": true
+    "allowJs": false
   },
   "include": [
     "piggy.ts",

@@ -484,7 +484,7 @@ export function createExposedAPI<T extends Record<string, (data: any) => any>>(s
     const handler = handlers[method as keyof T];
     if (!handler) throw new Error(`Unknown method: ${method}`);
     try { return await handler(args); }
-    catch (err) { logger.error(`[${site._name}] API error in ${method}:`, err); throw err; }
+    catch (err) { logger.error(`[${site._name}] API error in ${method}: ${err}`); throw err; }
   };
   return site.exposeFunction(apiName, wrappedHandler);
 }
