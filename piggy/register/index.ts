@@ -1,9 +1,11 @@
 // piggy/register/index.ts
 import { PiggyClient } from "../client";
 import logger from "../logger";
-import { routeRegistry, keepAliveSites, type RouteHandler, type BeforeMiddleware } from "../server";
+import { routeRegistry, keepAliveSites, type RouteHandler, type BeforeMiddleware, type RouteDetail } from "../server";
 import { randomDelay, humanTypeSequence } from "../human";
 import { buildRespondScript, buildModifyResponseScript } from "../intercept/scripts";
+import { storeRecord } from "../store";
+import { TabPool } from "../pool";
 
 let globalClient: PiggyClient | null = null;
 export let humanMode = false;
@@ -25,13 +27,24 @@ async function retry<T>(label: string, fn: () => Promise<T>, retries = 2, backof
   throw last;
 }
 
-export function createSiteObject(name: string, registeredUrl: string, client: PiggyClient, tabId: string) {
+export function createSiteObject(
+  name: string,
+  registeredUrl: string,
+  client: PiggyClient,
+  tabId: string,
+  pool?: TabPool
+) {
   let _currentUrl: string = registeredUrl;
+  let _modifyRuleCounter = 0;
 
-  // ── Event listeners store ──────────────────────────────────────────────────
+  // ── helpers ────────────────────────────────────────────────────────────────
+  // If pool exists, run fn with a pool tab. Otherwise use the fixed tabId.
+  function withTab<T>(fn: (t: string) => Promise<T>): Promise<T> {
+    return pool ? pool.withTab(fn) : fn(tabId);
+  }
+
   const _eventListeners = new Map<string, Set<(data: any) => void>>();
 
-  // Wire the client-level navigate event into site-level listeners
   const _unsubNavigate = client.onEvent("navigate", tabId, (url: string) => {
     _currentUrl = url;
     const handlers = _eventListeners.get("navigate");
@@ -51,59 +64,66 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
     }
   };
 
-  // ── Intercept helper: unique fn name per pattern ───────────────────────────
-  let _modifyRuleCounter = 0;
-
   const site: any = {
     _name: name,
     _tabId: tabId,
+    _pool: pool ?? null,
 
-    // ── Navigation ─────────────────────────────────────────────────────────────
+    // ── Pool stats ────────────────────────────────────────────────────────────
+    poolStats: () => pool?.stats ?? null,
+
+    // ── Navigation ────────────────────────────────────────────────────────────
     navigate: (url?: string, opts?: { retries?: number }) => {
       const target = url ?? registeredUrl;
-      return retry(name, async () => {
-        logger.network(`[${name}] navigating → ${target}`);
-        await client.navigate(target, tabId);
-        _currentUrl = target;
-      }, opts?.retries ?? 2);
+      return withTab(t =>
+        retry(name, async () => {
+          logger.network(`[${name}] navigating → ${target}`);
+          await client.navigate(target, t);
+          _currentUrl = target;
+        }, opts?.retries ?? 2)
+      );
     },
 
-    reload:             () => client.reload(tabId),
-    goBack:             () => client.goBack(tabId),
-    goForward:          () => client.goForward(tabId),
-    waitForNavigation:  () => client.waitForNavigation(tabId),
+    reload:            () => withTab(t => client.reload(t)),
+    goBack:            () => withTab(t => client.goBack(t)),
+    goForward:         () => withTab(t => client.goForward(t)),
+    waitForNavigation: () => withTab(t => client.waitForNavigation(t)),
 
-    title: async () => {
-      const t = await client.getTitle(tabId);
-      logger.info(`[${name}] title: ${t}`);
-      return t;
-    },
+    title: () => withTab(async t => {
+      const title = await client.getTitle(t);
+      logger.info(`[${name}] title: ${title}`);
+      return title;
+    }),
+
     url:     () => _currentUrl,
-    content: () => client.content(tabId),
+    content: () => withTab(t => client.content(t)),
 
     wait: (ms: number) => {
       const actual = humanMode ? ms + Math.floor(Math.random() * 600) - 300 : ms;
       return new Promise<void>(r => setTimeout(r, Math.max(0, actual)));
     },
 
-    waitForSelector: (selector: string, timeout = 30000) => {
-      logger.debug(`[${name}] waitForSelector: ${selector}`);
-      return client.waitForSelector(selector, timeout, tabId);
-    },
-    waitForVisible:  (selector: string, timeout = 30000) => client.waitForSelector(selector, timeout, tabId),
-    waitForResponse: (pattern: string, timeout = 30000)  => client.waitForResponse(pattern, timeout, tabId),
+    waitForSelector: (selector: string, timeout = 30000) =>
+      withTab(t => {
+        logger.debug(`[${name}] waitForSelector: ${selector}`);
+        return client.waitForSelector(selector, timeout, t);
+      }),
 
-    // ── Init Script ────────────────────────────────────────────────────────────
+    waitForVisible:  (selector: string, timeout = 30000) =>
+      withTab(t => client.waitForSelector(selector, timeout, t)),
+
+    waitForResponse: (pattern: string, timeout = 30000) =>
+      withTab(t => client.waitForResponse(pattern, timeout, t)),
+
+    // ── Init Script ───────────────────────────────────────────────────────────
     addInitScript: async (js: string | (() => void)) => {
-      const code = typeof js === 'function' ? `(${js.toString()})();` : js;
-      await client.addInitScript(code, tabId);
+      const code = typeof js === "function" ? `(${js.toString()})();` : js;
+      await withTab(t => client.addInitScript(code, t));
       logger.success(`[${name}] init script added`);
       return site;
     },
 
-    // ── Event emitter ──────────────────────────────────────────────────────────
-    // Usage: site.on('navigate', url => console.log('went to', url))
-    // Returns unsubscribe function
+    // ── Events ────────────────────────────────────────────────────────────────
     on: (event: string, handler: (data: any) => void): (() => void) => {
       if (!_eventListeners.has(event)) _eventListeners.set(event, new Set());
       _eventListeners.get(event)!.add(handler);
@@ -118,217 +138,199 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
       _eventListeners.get(event)?.delete(handler);
     },
 
-    // ── Interactions ───────────────────────────────────────────────────────────
+    // ── Interactions ──────────────────────────────────────────────────────────
     click: (selector: string, opts?: { retries?: number; timeout?: number }) =>
       withErrScreen(() =>
-        retry(name, async () => {
-          if (humanMode) await randomDelay(80, 220);
-          await client.waitForSelector(selector, opts?.timeout ?? 15000, tabId);
-          const ok = await client.click(selector, tabId);
-          if (!ok) throw new Error(`click failed: ${selector}`);
-          logger.success(`[${name}] clicked: ${selector}`);
-          return ok;
-        }, opts?.retries ?? 2),
+        withTab(t =>
+          retry(name, async () => {
+            if (humanMode) await randomDelay(80, 220);
+            await client.waitForSelector(selector, opts?.timeout ?? 15000, t);
+            const ok = await client.click(selector, t);
+            if (!ok) throw new Error(`click failed: ${selector}`);
+            logger.success(`[${name}] clicked: ${selector}`);
+            return ok;
+          }, opts?.retries ?? 2)
+        ),
         `click(${selector})`
       ),
 
     doubleClick: (selector: string) =>
-      withErrScreen(async () => {
-        if (humanMode) await randomDelay(80, 200);
-        return client.doubleClick(selector, tabId);
-      }, `dblclick(${selector})`),
+      withErrScreen(() =>
+        withTab(async t => {
+          if (humanMode) await randomDelay(80, 200);
+          return client.doubleClick(selector, t);
+        }),
+        `dblclick(${selector})`
+      ),
 
     hover: (selector: string) =>
-      withErrScreen(async () => {
-        if (humanMode) await randomDelay(50, 150);
-        return client.hover(selector, tabId);
-      }, `hover(${selector})`),
+      withErrScreen(() =>
+        withTab(async t => {
+          if (humanMode) await randomDelay(50, 150);
+          return client.hover(selector, t);
+        }),
+        `hover(${selector})`
+      ),
 
-    type: async (selector: string, text: string, opts?: { delay?: number; retries?: number; fact?: boolean; wpm?: number }) =>
-      withErrScreen(async () => {
-        await client.waitForSelector(selector, 15000, tabId);
-        if (humanMode && !opts?.fact) {
-          const seq = humanTypeSequence(text);
-          let current = "";
-          for (const action of seq) {
-            if (action === "BACKSPACE") current = current.slice(0, -1);
-            else current += action;
-            await client.type(selector, current, tabId);
-            const wpm = opts?.wpm ?? 120;
-            const msPerChar = Math.round(60000 / (wpm * 5));
-            await randomDelay(msPerChar * 0.5, msPerChar * 1.8);
+    type: (selector: string, text: string, opts?: { delay?: number; retries?: number; fact?: boolean; wpm?: number }) =>
+      withErrScreen(() =>
+        withTab(async t => {
+          await client.waitForSelector(selector, 15000, t);
+          if (humanMode && !opts?.fact) {
+            const seq = humanTypeSequence(text);
+            let current = "";
+            for (const action of seq) {
+              if (action === "BACKSPACE") current = current.slice(0, -1);
+              else current += action;
+              await client.type(selector, current, t);
+              const wpm = opts?.wpm ?? 120;
+              const msPerChar = Math.round(60000 / (wpm * 5));
+              await randomDelay(msPerChar * 0.5, msPerChar * 1.8);
+            }
+          } else if (opts?.delay) {
+            for (const ch of text) {
+              await client.type(selector, ch, t);
+              await new Promise(r => setTimeout(r, opts.delay));
+            }
+          } else {
+            await client.type(selector, text, t);
           }
-        } else if (opts?.delay) {
-          for (const ch of text) {
-            await client.type(selector, ch, tabId);
-            await new Promise(r => setTimeout(r, opts.delay));
-          }
-        } else {
-          await client.type(selector, text, tabId);
-        }
-        logger.success(`[${name}] typed into: ${selector}`);
-        return true;
-      }, `type(${selector})`),
+          logger.success(`[${name}] typed into: ${selector}`);
+          return true;
+        }),
+        `type(${selector})`
+      ),
 
-    select:   (selector: string, value: string) => client.select(selector, value, tabId),
+    select:   (selector: string, value: string) => withTab(t => client.select(selector, value, t)),
+
     evaluate: (js: string | (() => any), ...args: any[]) => {
-      const code = typeof js === "function" ? `(${js.toString()})(${args.map(a => JSON.stringify(a)).join(",")})` : js;
-      return client.evaluate(code, tabId);
+      const code = typeof js === "function"
+        ? `(${js.toString()})(${args.map(a => JSON.stringify(a)).join(",")})`
+        : js;
+      return withTab(t => client.evaluate(code, t));
     },
 
     keyboard: {
-      press: (key: string)   => client.keyPress(key, tabId),
-      combo: (combo: string) => client.keyCombo(combo, tabId),
+      press: (key: string)   => withTab(t => client.keyPress(key, t)),
+      combo: (combo: string) => withTab(t => client.keyCombo(combo, t)),
     },
 
     mouse: {
-      move: (x: number, y: number) => client.mouseMove(x, y, tabId),
-      drag: (from: { x: number; y: number }, to: { x: number; y: number }) => client.mouseDrag(from, to, tabId),
+      move: (x: number, y: number) => withTab(t => client.mouseMove(x, y, t)),
+      drag: (from: { x: number; y: number }, to: { x: number; y: number }) =>
+        withTab(t => client.mouseDrag(from, to, t)),
     },
 
     scroll: {
-      to: (selector: string) => client.scrollTo(selector, tabId),
-      by: (px: number) => {
-        if (humanMode) {
-          const steps = Math.ceil(Math.abs(px) / 120);
-          const chunk = px / steps;
-          return (async () => {
+      to: (selector: string) => withTab(t => client.scrollTo(selector, t)),
+      by: (px: number) => withTab(async t => {
+          if (humanMode) {
+            const steps = Math.ceil(Math.abs(px) / 120);
+            const chunk = px / steps;
             for (let i = 0; i < steps; i++) {
-              await client.scrollBy(chunk, tabId);
+              await client.scrollBy(chunk, t);
               await randomDelay(30, 80);
             }
-          })();
-        }
-        return client.scrollBy(px, tabId);
-      },
+          } else {
+            await client.scrollBy(px, t);
+          }
+        }) as Promise<void>,
     },
 
-    // ── Fetch ──────────────────────────────────────────────────────────────────
-    fetchText:   (selector: string) => client.fetchText(selector, tabId),
-    fetchLinks:  async (selector: string) => {
-      const links = await client.fetchLinks(selector, tabId);
+    // ── Fetch ─────────────────────────────────────────────────────────────────
+    fetchText:   (selector: string) => withTab(t => client.fetchText(selector, t)),
+
+    fetchLinks: async (selector: string) => {
+      const links = await withTab(t => client.fetchLinks(selector, t));
       logger.info(`[${name}] fetchLinks(${selector}): ${links.length}`);
       return links;
     },
+
     fetchImages: async (selector: string) => {
-      const imgs = await client.fetchImages(selector, tabId);
+      const imgs = await withTab(t => client.fetchImages(selector, t));
       logger.info(`[${name}] fetchImages(${selector}): ${imgs.length}`);
       return imgs;
     },
 
     search: {
-      css: (query: string) => client.searchCss(query, tabId),
-      id:  (query: string) => client.searchId(query, tabId),
+      css: (query: string) => withTab(t => client.searchCss(query, t)),
+      id:  (query: string) => withTab(t => client.searchId(query, t)),
     },
 
-    // ── Screenshot / PDF ───────────────────────────────────────────────────────
+    // ── Screenshot / PDF ──────────────────────────────────────────────────────
     screenshot: async (filePath?: string) => {
-      const r = await client.screenshot(filePath, tabId);
+      const r = await withTab(t => client.screenshot(filePath, t));
       logger.success(`[${name}] screenshot → ${filePath ?? "base64"}`);
       return r;
     },
+
     pdf: async (filePath?: string) => {
-      const r = await client.pdf(filePath, tabId);
+      const r = await withTab(t => client.pdf(filePath, t));
       logger.success(`[${name}] pdf → ${filePath ?? "base64"}`);
       return r;
     },
 
-    blockImages:   async () => { await client.blockImages(tabId);   logger.info(`[${name}] images blocked`); },
-    unblockImages: async () => { await client.unblockImages(tabId); logger.info(`[${name}] images unblocked`); },
+    blockImages:   () => withTab(async t => { await client.blockImages(t);   logger.info(`[${name}] images blocked`); }),
+    unblockImages: () => withTab(async t => { await client.unblockImages(t); logger.info(`[${name}] images unblocked`); }),
 
-    // ── Cookies ────────────────────────────────────────────────────────────────
+    // ── Cookies ───────────────────────────────────────────────────────────────
     cookies: {
       set: async (cookieName: string, value: string, domain: string, path = "/") => {
-        await client.setCookie(cookieName, value, domain, path, tabId);
+        await withTab(t => client.setCookie(cookieName, value, domain, path, t));
         logger.info(`[${name}] cookie set: ${cookieName} @ ${domain}`);
       },
-      get: (cookieName: string) => client.getCookie(cookieName, tabId),
+      get:    (cookieName: string) => withTab(t => client.getCookie(cookieName, t)),
       delete: async (cookieName: string) => {
-        await client.deleteCookie(cookieName, tabId);
+        await withTab(t => client.deleteCookie(cookieName, t));
         logger.info(`[${name}] cookie deleted: ${cookieName}`);
       },
-      list: () => client.listCookies(tabId),
+      list: () => withTab(t => client.listCookies(t)),
     },
 
-    // ── Interception ───────────────────────────────────────────────────────────
+    // ── Interception ──────────────────────────────────────────────────────────
     intercept: {
       block: async (pattern: string) => {
-        await client.addInterceptRule("block", pattern, {}, tabId);
+        await withTab(t => client.addInterceptRule("block", pattern, {}, t));
         logger.info(`[${name}] intercept block: ${pattern}`);
       },
 
       redirect: async (pattern: string, redirectUrl: string) => {
-        await client.addInterceptRule("redirect", pattern, { redirectUrl }, tabId);
+        await withTab(t => client.addInterceptRule("redirect", pattern, { redirectUrl }, t));
         logger.info(`[${name}] intercept redirect: ${pattern} → ${redirectUrl}`);
       },
 
       headers: async (pattern: string, headers: Record<string, string>) => {
-        await client.addInterceptRule("modifyHeaders", pattern, { headers }, tabId);
+        await withTab(t => client.addInterceptRule("modifyHeaders", pattern, { headers }, t));
         logger.info(`[${name}] intercept modifyHeaders: ${pattern}`);
       },
 
-      // ── NEW: intercept.respond ──────────────────────────────────────────────
-      // Intercepts matching requests and returns a fake response — request never
-      // leaves the browser. Works for both fetch and XHR via JS injection.
-      //
-      // Usage:
-      //   await site.intercept.respond('/api/prices', (req) => ({
-      //     status: 200,
-      //     contentType: 'application/json',
-      //     body: JSON.stringify({ price: 99 })
-      //   }))
-      //
-      //   // Static shorthand:
-      //   await site.intercept.respond('/api/prices', {
-      //     status: 200, contentType: 'application/json', body: '{"price":99}'
-      //   })
       respond: async (
         pattern: string,
         handlerOrResponse:
           | { status?: number; contentType?: string; body: string }
           | ((req: { url: string; method: string }) => { status?: number; contentType?: string; body: string })
       ) => {
-        // Static response — just inject the JS rule directly
         const isStatic = typeof handlerOrResponse === "object";
-        const response = isStatic
-          ? handlerOrResponse
-          : { status: 200, contentType: "application/json", body: "" };
 
         if (!isStatic) {
-          // Dynamic: expose a function, call it from the injected script
           const fnName = `__piggy_respond_${name}_${++_modifyRuleCounter}__`;
-
           await client.exposeFunction(fnName, async (req: { url: string; method: string }) => {
             try {
               const result = (handlerOrResponse as Function)(req);
-              return {
-                success: true,
-                result: {
-                  status:      result.status      ?? 200,
-                  contentType: result.contentType ?? "application/json",
-                  body:        result.body        ?? "",
-                }
-              };
+              return { success: true, result: { status: result.status ?? 200, contentType: result.contentType ?? "application/json", body: result.body ?? "" } };
             } catch (e: any) {
               return { success: false, error: e.message };
             }
           }, tabId);
 
-          // Inject a script that calls the exposed function instead of static body
           const dynamicScript = `
 (function() {
   'use strict';
   if (!window.__PIGGY_DYNAMIC_RESPOND__) window.__PIGGY_DYNAMIC_RESPOND__ = [];
   window.__PIGGY_DYNAMIC_RESPOND__.push({ pattern: ${JSON.stringify(pattern)}, fn: ${JSON.stringify(fnName)} });
-
-  function matchUrl(url, pattern) {
-    try { return url.includes(pattern) || new RegExp(pattern).test(url); }
-    catch { return url.includes(pattern); }
-  }
-
+  function matchUrl(url, pattern) { try { return url.includes(pattern) || new RegExp(pattern).test(url); } catch { return url.includes(pattern); } }
   if (window.__PIGGY_DYN_INSTALLED__) return;
   window.__PIGGY_DYN_INSTALLED__ = true;
-
   const _origFetch = window.fetch;
   window.fetch = async function(input, init) {
     const url = typeof input === 'string' ? input : (input?.url ?? String(input));
@@ -336,95 +338,81 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
     const rules = window.__PIGGY_DYNAMIC_RESPOND__ || [];
     for (const rule of rules) {
       if (matchUrl(url, rule.pattern) && typeof window[rule.fn] === 'function') {
-        try {
-          const r = await window[rule.fn]({ url, method });
-          return new Response(r.body ?? '', {
-            status: r.status ?? 200,
-            headers: { 'Content-Type': r.contentType ?? 'application/json' }
-          });
-        } catch { break; }
+        try { const r = await window[rule.fn]({ url, method }); return new Response(r.body ?? '', { status: r.status ?? 200, headers: { 'Content-Type': r.contentType ?? 'application/json' } }); } catch { break; }
       }
     }
     return _origFetch.apply(this, arguments);
   };
 })();`;
-          await client.addInitScript(dynamicScript, tabId);
-          await client.evaluate(dynamicScript, tabId);
+          await withTab(async t => {
+            await client.addInitScript(dynamicScript, t);
+            await client.evaluate(dynamicScript, t);
+          });
           logger.success(`[${name}] intercept.respond (dynamic): ${pattern}`);
           return site;
         }
 
-        // Static path: inject the JS intercept rule
-        const script = buildRespondScript(
-          pattern,
-          response.status      ?? 200,
-          response.contentType ?? "application/json",
-          response.body
-        );
-        await client.addInitScript(script, tabId);
-        await client.evaluate(script, tabId);
+        const response = handlerOrResponse;
+        const script = buildRespondScript(pattern, response.status ?? 200, response.contentType ?? "application/json", response.body);
+        await withTab(async t => {
+          await client.addInitScript(script, t);
+          await client.evaluate(script, t);
+        });
         logger.success(`[${name}] intercept.respond (static): ${pattern} → ${response.status ?? 200}`);
         return site;
       },
 
-      // ── NEW: intercept.modifyResponse ───────────────────────────────────────
-      // Lets the request hit the network, then calls your handler with the
-      // response. Return { body?, status?, headers? } to modify, or {} to
-      // pass through unchanged.
-      //
-      // Usage:
-      //   await site.intercept.modifyResponse('/api/feed', async ({ body, status }) => {
-      //     const data = JSON.parse(body)
-      //     data.items = data.items.slice(0, 5)
-      //     return { body: JSON.stringify(data) }
-      //   })
       modifyResponse: async (
         pattern: string,
         handler: (response: { body: string; status: number; headers: Record<string, string> }) =>
           Promise<{ body?: string; status?: number; headers?: Record<string, string> } | void> | void
       ) => {
         const fnName = `__piggy_modres_${name}_${++_modifyRuleCounter}__`;
-
-        await client.exposeFunction(fnName, async (response: { body: string; status: number; headers: Record<string, string> }) => {
-          try {
-            const mod = await handler(response);
-            return { success: true, result: mod ?? {} };
-          } catch (e: any) {
-            return { success: false, error: e.message };
-          }
+        await client.exposeFunction(fnName, async (response: any) => {
+          try { const mod = await handler(response); return { success: true, result: mod ?? {} }; }
+          catch (e: any) { return { success: false, error: e.message }; }
         }, tabId);
 
         const script = buildModifyResponseScript(pattern, fnName);
-        await client.addInitScript(script, tabId);
-        await client.evaluate(script, tabId);
+        await withTab(async t => {
+          await client.addInitScript(script, t);
+          await client.evaluate(script, t);
+        });
         logger.success(`[${name}] intercept.modifyResponse: ${pattern}`);
         return site;
       },
 
       clear: async () => {
-        await client.clearInterceptRules(tabId);
+        await withTab(t => client.clearInterceptRules(t));
         logger.info(`[${name}] intercept rules cleared`);
       },
     },
 
-    // ── Network capture ────────────────────────────────────────────────────────
+    // ── Network capture ───────────────────────────────────────────────────────
     capture: {
-      start: async () => { await client.captureStart(tabId); logger.info(`[${name}] capture started`); },
-      stop:  async () => { await client.captureStop(tabId);  logger.info(`[${name}] capture stopped`); },
-      requests: () => client.captureRequests(tabId),
-      ws:       () => client.captureWs(tabId),
-      cookies:  () => client.captureCookies(tabId),
-      storage:  () => client.captureStorage(tabId),
-      clear: async () => { await client.captureClear(tabId); logger.info(`[${name}] capture cleared`); },
+      start:    () => withTab(async t => { await client.captureStart(t);  logger.info(`[${name}] capture started`); }),
+      stop:     () => withTab(async t => { await client.captureStop(t);   logger.info(`[${name}] capture stopped`); }),
+      requests: () => withTab(t => client.captureRequests(t)),
+      ws:       () => withTab(t => client.captureWs(t)),
+      cookies:  () => withTab(t => client.captureCookies(t)),
+      storage:  () => withTab(t => client.captureStorage(t)),
+      clear:    () => withTab(async t => { await client.captureClear(t);  logger.info(`[${name}] capture cleared`); }),
     },
 
-    // ── Session ────────────────────────────────────────────────────────────────
+    // ── Session ───────────────────────────────────────────────────────────────
     session: {
-      export: async () => { const data = await client.sessionExport(tabId); logger.success(`[${name}] session exported`); return data; },
-      import: async (data: any) => { await client.sessionImport(data, tabId); logger.success(`[${name}] session imported`); },
+      export: async () => {
+        const data = await withTab(t => client.sessionExport(t));
+        logger.success(`[${name}] session exported`);
+        return data;
+      },
+      import: async (data: any) => {
+        await withTab(t => client.sessionImport(data, t));
+        logger.success(`[${name}] session imported`);
+      },
     },
 
-    // ── Expose Function ─────────────────────────────────────────────────────────
+    // ── Expose Function ───────────────────────────────────────────────────────
     exposeFunction: async (fnName: string, handler: (data: any) => Promise<any> | any) => {
       await client.exposeFunction(fnName, handler, tabId);
       logger.success(`[${name}] exposed function: ${fnName}`);
@@ -443,21 +431,42 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
     exposeAndInject: async (fnName: string, handler: (data: any) => Promise<any> | any, injectionJs: string | ((fnName: string) => string)) => {
       await client.exposeFunction(fnName, handler, tabId);
       const js = typeof injectionJs === "function" ? injectionJs(fnName) : injectionJs;
-      await client.evaluate(js, tabId);
+      await withTab(t => client.evaluate(js, t));
       logger.success(`[${name}] exposed and injected: ${fnName}`);
       return site;
     },
 
-    // ── Elysia API ─────────────────────────────────────────────────────────────
-    api: (path: string, handler: RouteHandler, opts?: { ttl?: number; before?: BeforeMiddleware[]; method?: "GET" | "POST" | "PUT" | "DELETE" }) => {
+    // ── Store ─────────────────────────────────────────────────────────────────
+    store: async (
+      data: Record<string, any> | Record<string, any>[],
+      schemaName?: string
+    ) => {
+      const target = schemaName ?? name;
+      const result = await storeRecord(target, data);
+      logger.info(`[${name}] store → stored: ${result.stored}, skipped: ${result.skipped}`);
+      return result;
+    },
+
+    // ── Elysia API ────────────────────────────────────────────────────────────
+    api: (
+      path: string,
+      handler: RouteHandler,
+      opts?: {
+        ttl?: number;
+        before?: BeforeMiddleware[];
+        method?: "GET" | "POST" | "PUT" | "DELETE";
+        detail?: RouteDetail;
+      }
+    ) => {
       const key = `${name}:${path}`;
       if (routeRegistry.has(key)) { logger.warn(`[${name}] route ${path} already registered`); return site; }
       routeRegistry.set(key, {
         path,
-        method: opts?.method ?? "GET",
+        method:  opts?.method ?? "GET",
         handler,
-        ttl: opts?.ttl ?? 360_000,
-        before: opts?.before ?? [],
+        ttl:     opts?.ttl ?? 360_000,
+        before:  opts?.before ?? [],
+        detail:  opts?.detail,
       });
       logger.info(`[${name}] api route: ${opts?.method ?? "GET"} /${name}${path}`);
       return site;
@@ -466,9 +475,11 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
     noclose: () => { keepAliveSites.add(name); logger.info(`[${name}] keep-alive`); return site; },
 
     close: async () => {
-      _unsubNavigate(); // Clean up navigate listener
+      _unsubNavigate();
       keepAliveSites.delete(name);
-      if (tabId !== "default") {
+      if (pool) {
+        await pool.close();
+      } else if (tabId !== "default") {
         await client.closeTab(tabId);
         logger.info(`[${name}] tab closed`);
       }
@@ -478,7 +489,13 @@ export function createSiteObject(name: string, registeredUrl: string, client: Pi
   return site;
 }
 
-export function createExposedAPI<T extends Record<string, (data: any) => any>>(site: any, apiName: string, handlers: T): Promise<void> {
+export type SiteObject = ReturnType<typeof createSiteObject>;
+
+export function createExposedAPI<T extends Record<string, (data: any) => any>>(
+  site: any,
+  apiName: string,
+  handlers: T
+): Promise<void> {
   const wrappedHandler = async (call: any) => {
     const { method, args } = call;
     const handler = handlers[method as keyof T];

@@ -2,22 +2,20 @@
 import { detectBinary, type BinaryMode } from "./piggy/launch/detect";
 import { spawnBrowser, killBrowser, spawnBrowserOnSocket } from "./piggy/launch/spawn";
 import { PiggyClient } from "./piggy/client";
-import { setClient, setHumanMode, createSiteObject } from "./piggy/register";
+import { setClient, setHumanMode, createSiteObject, type SiteObject } from "./piggy/register";
 import { routeRegistry, keepAliveSites, startServer, stopServer } from "./piggy/server";
+import { TabPool } from "./piggy/pool";
 import logger from "./piggy/logger";
 
 type TabMode = "tab" | "process";
-type SiteObject = ReturnType<typeof createSiteObject>;
 
 let _client: PiggyClient | null = null;
 let _tabMode: TabMode = "tab";
 const _extraProcs: { socket: string; client: PiggyClient }[] = [];
-const _sites: Record<string, SiteObject> = {};
+const _sites: Record<string, SiteObject> = [];
 
-// CREATE THE PIGGY OBJECT AS A PLAIN OBJECT - NOT A PROXY
 const piggy: any = {
-  // ── Lifecycle ───────────────────────────────────────────────────────────────
-
+  // ── Local launch (socket) ─────────────────────────────────────────────────
   launch: async (opts?: { mode?: TabMode; binary?: BinaryMode }) => {
     _tabMode = opts?.mode ?? "tab";
     const binaryMode: BinaryMode = opts?.binary ?? "headless";
@@ -30,19 +28,46 @@ const piggy: any = {
     return piggy;
   },
 
-  register: async (name: string, url: string, opts?: { binary?: BinaryMode }) => {
+  // ── Remote connect (HTTP) ─────────────────────────────────────────────────
+  connect: async (opts: { host: string; key: string }) => {
+    _tabMode = "tab";
+    _client = new PiggyClient({ host: opts.host, key: opts.key });
+    await _client.connect();
+    setClient(_client);
+    logger.info(`[piggy] connected (HTTP) → ${opts.host}`);
+    return piggy;
+  },
+
+  // ── Register ──────────────────────────────────────────────────────────────
+  register: async (
+    name: string,
+    url: string,
+    opts?: {
+      binary?: BinaryMode;
+      pool?: number;
+    }
+  ) => {
     if (!url?.trim()) throw new Error(`No URL for site "${name}"`);
     const binaryMode: BinaryMode = opts?.binary ?? "headless";
+    const poolSize = opts?.pool ?? 0;
 
-    let tabId = "default";
     if (_tabMode === "tab") {
-      if (!_client) throw new Error("No client. Call piggy.launch() first.");
-      tabId = await _client.newTab();
-      // HERE IT IS - CREATE SITE OBJECT AND ASSIGN DIRECTLY
-      const siteObj = createSiteObject(name, url, _client, tabId);
-      _sites[name] = siteObj;
-      piggy[name] = siteObj;  // DIRECT ASSIGNMENT - NO PROXY
-      logger.success(`[${name}] registered as tab ${tabId}`);
+      if (!_client) throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
+
+      if (poolSize > 1) {
+        const pool = new TabPool(_client, poolSize, url, name);
+        await pool.init();
+        const siteObj = createSiteObject(name, url, _client, "default", pool);
+        _sites[name] = siteObj;
+        piggy[name] = siteObj;
+        logger.success(`[${name}] registered with pool of ${poolSize} tabs`);
+      } else {
+        const tabId = await _client.newTab();
+        const siteObj = createSiteObject(name, url, _client, tabId);
+        _sites[name] = siteObj;
+        piggy[name] = siteObj;
+        logger.success(`[${name}] registered as tab ${tabId}`);
+      }
     } else {
       const socketName = `piggy_${name}`;
       await spawnBrowserOnSocket(socketName, binaryMode);
@@ -52,15 +77,14 @@ const piggy: any = {
       _extraProcs.push({ socket: socketName, client: c });
       const siteObj = createSiteObject(name, url, c, "default");
       _sites[name] = siteObj;
-      piggy[name] = siteObj;  // DIRECT ASSIGNMENT - NO PROXY
+      piggy[name] = siteObj;
       logger.success(`[${name}] registered as process on "${socketName}"`);
     }
 
     return piggy;
   },
 
-  // ── Global controls ─────────────────────────────────────────────────────────
-
+  // ── Global controls ───────────────────────────────────────────────────────
   actHuman: (enable: boolean) => {
     setHumanMode(enable);
     logger.info(`[piggy] actHuman: ${enable}`);
@@ -69,31 +93,56 @@ const piggy: any = {
 
   mode: (m: TabMode) => { _tabMode = m; return piggy; },
 
-  // ── Expose Function (global) ─────────────────────────────────────────────────
-
+  // ── Expose Function ───────────────────────────────────────────────────────
   expose: async (name: string, handler: (data: any) => Promise<any> | any, tabId = "default") => {
-    if (!_client) throw new Error("No client. Call piggy.launch() first.");
+    if (!_client) throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
     await _client.exposeFunction(name, handler, tabId);
     logger.success(`[piggy] exposed global function: ${name}`);
     return piggy;
   },
 
   unexpose: async (name: string, tabId = "default") => {
-    if (!_client) throw new Error("No client. Call piggy.launch() first.");
+    if (!_client) throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
     await _client.unexposeFunction(name, tabId);
     logger.info(`[piggy] unexposed function: ${name}`);
     return piggy;
   },
 
-  // ── Elysia server ────────────────────────────────────────────────────────────
+  // ── Proxy ─────────────────────────────────────────────────────────────────
+  proxy: {
+    load:     (path: string)                                               => { if (!_client) throw new Error("No client"); return _client.proxyLoad(path); },
+    fetch:    (url: string)                                                => { if (!_client) throw new Error("No client"); return _client.proxyFetch(url); },
+    ovpn:     (path: string)                                               => { if (!_client) throw new Error("No client"); return _client.proxyOvpn(path); },
+    set:      (opts: Parameters<PiggyClient["proxySet"]>[0])               => { if (!_client) throw new Error("No client"); return _client.proxySet(opts); },
+    test:     ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyTest(); },
+    testStop: ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyTestStop(); },
+    next:     ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyNext(); },
+    disable:  ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyDisable(); },
+    enable:   ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyEnable(); },
+    current:  ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyCurrent(); },
+    stats:    ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyStats(); },
+    list:     (limit?: number)                                             => { if (!_client) throw new Error("No client"); return _client.proxyList(limit); },
+    rotation: (mode: "none" | "timed" | "perrequest", interval?: number)  => { if (!_client) throw new Error("No client"); return _client.proxyRotation(mode, interval); },
+    config:   (opts: { skipDead?: boolean; autoCheck?: boolean })          => { if (!_client) throw new Error("No client"); return _client.proxyConfig(opts); },
+    save:     (path: string, filter?: "alive" | "dead" | "all")           => { if (!_client) throw new Error("No client"); return _client.proxySave(path, filter); },
+    on:       (event: string, handler: (data: any) => void)               => { if (!_client) throw new Error("No client"); return _client.onProxyEvent(event, handler); },
+  },
 
-  serve: (port: number, opts?: { hostname?: string }) =>
-    startServer(port, opts?.hostname),
+  // ── Elysia server ─────────────────────────────────────────────────────────
+  serve: (
+    port: number,
+    opts?: {
+      hostname?: string;
+      title?: string;
+      version?: string;
+      description?: string;
+      path?: string;
+    }
+  ) => startServer(port, opts?.hostname, opts),
 
   stopServer,
 
-  // ── Route listing ────────────────────────────────────────────────────────────
-
+  // ── Route listing ─────────────────────────────────────────────────────────
   routes: () =>
     Array.from(routeRegistry.entries()).map(([key, cfg]) => {
       const [site] = key.split(":");
@@ -106,8 +155,7 @@ const piggy: any = {
       };
     }),
 
-  // ── Multi-site ───────────────────────────────────────────────────────────────
-
+  // ── Multi-site ────────────────────────────────────────────────────────────
   all: (sites: SiteObject[]) =>
     new Proxy({} as any, {
       get: (_, method: string) =>
@@ -123,8 +171,7 @@ const piggy: any = {
         },
     }),
 
-  // ── Shutdown ─────────────────────────────────────────────────────────────────
-
+  // ── Shutdown ──────────────────────────────────────────────────────────────
   close: async (opts?: { force?: boolean }) => {
     stopServer();
     if (opts?.force) {
@@ -135,7 +182,7 @@ const piggy: any = {
       keepAliveSites.clear();
     } else {
       for (const [name, site] of Object.entries(_sites)) {
-        if (!keepAliveSites.has(name)) await site.close?.();
+        if (!keepAliveSites.has(name)) await (site as any).close?.();
       }
       if (keepAliveSites.size === 0) {
         for (const { client: c } of _extraProcs) c.disconnect();
@@ -153,6 +200,18 @@ const piggy: any = {
   logger,
 };
 
-// NO PROXY WRAPPER - EXPORT THE PLAIN OBJECT DIRECTLY
+// ── usePiggy ──────────────────────────────────────────────────────────────────
+// Typed accessor — call AFTER register() so sites exist on piggy.
+// const { amazon, ebay } = usePiggy<"amazon" | "ebay">()
+
+type TypedPiggy<Sites extends string> = typeof piggy & {
+  [K in Sites]: SiteObject;
+};
+
+export function usePiggy<Sites extends string>(): TypedPiggy<Sites> {
+  return piggy as TypedPiggy<Sites>;
+}
+
+export type { SiteObject };
 export default piggy;
 export { piggy };
