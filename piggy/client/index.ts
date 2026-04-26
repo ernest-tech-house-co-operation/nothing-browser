@@ -42,9 +42,6 @@ class SocketTransport implements Transport {
 }
 
 // ── HTTP transport ─────────────────────────────────────────────────────────────
-// Wraps the HTTP remote endpoint so it looks identical to the socket transport.
-// The C++ server accepts the same { id, cmd, payload } JSON over HTTP POST.
-// Responses come back as { id, ok, data } — same structure, different wire.
 
 class HttpTransport implements Transport {
   private host: string;
@@ -55,21 +52,16 @@ class HttpTransport implements Transport {
   private _destroyed = false;
 
   constructor(host: string, key: string) {
-    // Normalize host — strip trailing slash
     this.host = host.replace(/\/$/, "");
     this.key = key;
   }
 
-  // HTTP is request/response — there are no persistent data/close events.
-  // We keep the interface compatible; socket-style events are no-ops here.
   on(event: string, handler: any) {
     if (event === "data")  this.dataHandlers.push(handler);
     if (event === "error") this.errorHandlers.push(handler);
     if (event === "close") this.closeHandlers.push(handler);
   }
 
-  // send() is called by PiggyClient with a JSON line.
-  // We POST it, get the response, and fire the data handler synchronously.
   send(data: string) {
     if (this._destroyed) return;
 
@@ -90,7 +82,6 @@ class HttpTransport implements Transport {
           return;
         }
         const text = await res.text();
-        // Server may return one or more newline-delimited JSON lines
         const lines = text.split("\n").filter(l => l.trim());
         for (const line of lines) {
           this.dataHandlers.forEach(h => h(line + "\n"));
@@ -122,9 +113,7 @@ export class PiggyClient {
   private eventHandlers = new Map<string, Map<string, (data: any) => Promise<any>>>();
   private globalEventHandlers = new Map<string, Set<(data: any) => void>>();
 
-  // Socket mode constructor (default)
   constructor(socketPath?: string);
-  // HTTP mode constructor
   constructor(opts: { host: string; key: string });
 
   constructor(arg?: string | { host: string; key: string }) {
@@ -138,12 +127,10 @@ export class PiggyClient {
     this.eventHandlers.set("default", new Map());
   }
 
-  // ── Connect ──────────────────────────────────────────────────────────────────
+  // ── Connect ───────────────────────────────────────────────────────────────
 
   connect(): Promise<void> {
-    if (this.httpHost) {
-      return this._connectHttp();
-    }
+    if (this.httpHost) return this._connectHttp();
     return this._connectSocket();
   }
 
@@ -169,7 +156,6 @@ export class PiggyClient {
   }
 
   private async _connectHttp(): Promise<void> {
-    // Verify the server is alive and the key is valid before handing back
     logger.info(`Connecting to Piggy server (HTTP): ${this.httpHost}`);
     try {
       const res = await fetch(this.httpHost!, {
@@ -231,7 +217,7 @@ export class PiggyClient {
     });
   }
 
-  // ── Event handling ────────────────────────────────────────────────────────────
+  // ── Event handling ────────────────────────────────────────────────────────
 
   private handleEvent(event: any) {
     if (event.event === "exposed_call") {
@@ -310,7 +296,7 @@ export class PiggyClient {
     this.transport = null;
   }
 
-  // ── Core send ─────────────────────────────────────────────────────────────────
+  // ── Core send ─────────────────────────────────────────────────────────────
 
   send<T = any>(cmd: string, payload: Record<string, any> = {}): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -321,27 +307,27 @@ export class PiggyClient {
     });
   }
 
-  // ── Tabs ──────────────────────────────────────────────────────────────────────
+  // ── Tabs ──────────────────────────────────────────────────────────────────
   async newTab(): Promise<string> { return this.send<string>("tab.new", {}); }
   async closeTab(tabId: string): Promise<void> { await this.send("tab.close", { tabId }); }
   async listTabs(): Promise<string[]> { return this.send<string[]>("tab.list", {}); }
 
-  // ── Navigation ────────────────────────────────────────────────────────────────
+  // ── Navigation ────────────────────────────────────────────────────────────
   async navigate(url: string, tabId = "default"): Promise<void> { await this.send("navigate", { url, tabId }); }
   async reload(tabId = "default"): Promise<void> { await this.send("reload", { tabId }); }
   async goBack(tabId = "default"): Promise<void> { await this.send("go.back", { tabId }); }
   async goForward(tabId = "default"): Promise<void> { await this.send("go.forward", { tabId }); }
 
-  // ── Page info ─────────────────────────────────────────────────────────────────
+  // ── Page info ─────────────────────────────────────────────────────────────
   async getTitle(tabId = "default"): Promise<string> { return this.send<string>("page.title", { tabId }); }
   async getUrl(tabId = "default"): Promise<string> { return this.send<string>("page.url", { tabId }); }
   async content(tabId = "default"): Promise<string> { return this.send<string>("page.content", { tabId }); }
 
-  // ── Eval / JS ─────────────────────────────────────────────────────────────────
+  // ── Eval / JS ─────────────────────────────────────────────────────────────
   async evaluate(js: string, tabId = "default"): Promise<any> { return this.send("evaluate", { js, tabId }); }
   async addInitScript(js: string, tabId = "default"): Promise<void> { await this.send("addInitScript", { js, tabId }); }
 
-  // ── Interactions ──────────────────────────────────────────────────────────────
+  // ── Interactions ──────────────────────────────────────────────────────────
   async click(selector: string, tabId = "default"): Promise<boolean> { return this.send<boolean>("click", { selector, tabId }); }
   async doubleClick(selector: string, tabId = "default"): Promise<boolean> { return this.send<boolean>("dblclick", { selector, tabId }); }
   async hover(selector: string, tabId = "default"): Promise<boolean> { return this.send<boolean>("hover", { selector, tabId }); }
@@ -352,11 +338,11 @@ export class PiggyClient {
   async mouseMove(x: number, y: number, tabId = "default"): Promise<boolean> { return this.send<boolean>("mouse.move", { x, y, tabId }); }
   async mouseDrag(from: { x: number; y: number }, to: { x: number; y: number }, tabId = "default"): Promise<boolean> { return this.send<boolean>("mouse.drag", { from, to, tabId }); }
 
-  // ── Scroll ────────────────────────────────────────────────────────────────────
+  // ── Scroll ────────────────────────────────────────────────────────────────
   async scrollTo(selector: string, tabId = "default"): Promise<boolean> { return this.send<boolean>("scroll.to", { selector, tabId }); }
   async scrollBy(px: number, tabId = "default"): Promise<boolean> { return this.send<boolean>("scroll.by", { px, tabId }); }
 
-  // ── Fetch ─────────────────────────────────────────────────────────────────────
+  // ── Fetch ─────────────────────────────────────────────────────────────────
   async fetchText(query: string, tabId = "default"): Promise<string | null> { return this.send<string | null>("fetch.text", { query, tabId }); }
   async fetchLinks(query: string, tabId = "default"): Promise<string[]> {
     if (query === "a" || query === "body") {
@@ -371,16 +357,16 @@ export class PiggyClient {
     return Array.isArray(result) ? result : [];
   }
 
-  // ── Search ────────────────────────────────────────────────────────────────────
+  // ── Search ────────────────────────────────────────────────────────────────
   async searchCss(query: string, tabId = "default"): Promise<any> { return this.send("search.css", { query, tabId }); }
   async searchId(query: string, tabId = "default"): Promise<any> { return this.send("search.id", { query, tabId }); }
 
-  // ── Wait ──────────────────────────────────────────────────────────────────────
+  // ── Wait ──────────────────────────────────────────────────────────────────
   async waitForSelector(selector: string, timeout = 30000, tabId = "default"): Promise<void> { await this.send("wait.selector", { selector, timeout, tabId }); }
   async waitForNavigation(tabId = "default"): Promise<void> { await this.send("wait.navigation", { tabId }); }
   async waitForResponse(urlPattern: string, timeout = 30000, tabId = "default"): Promise<void> { await this.send("wait.response", { url: urlPattern, timeout, tabId }); }
 
-  // ── Screenshot / PDF ──────────────────────────────────────────────────────────
+  // ── Screenshot / PDF ──────────────────────────────────────────────────────
   async screenshot(filePath?: string, tabId = "default"): Promise<string> {
     const b64 = await this.send<string>("screenshot", { tabId });
     if (filePath) { mkdirSync(dirname(filePath), { recursive: true }); writeFileSync(filePath, Buffer.from(b64, "base64")); }
@@ -392,23 +378,23 @@ export class PiggyClient {
     return filePath ?? b64;
   }
 
-  // ── Image blocking ────────────────────────────────────────────────────────────
+  // ── Image blocking ────────────────────────────────────────────────────────
   async blockImages(tabId = "default"): Promise<void> { await this.send("intercept.block.images", { tabId }); }
   async unblockImages(tabId = "default"): Promise<void> { await this.send("intercept.unblock.images", { tabId }); }
 
-  // ── Cookies ───────────────────────────────────────────────────────────────────
+  // ── Cookies ───────────────────────────────────────────────────────────────
   async setCookie(name: string, value: string, domain: string, path = "/", tabId = "default"): Promise<void> { await this.send("cookie.set", { name, value, domain, path, tabId }); }
   async getCookie(name: string, tabId = "default"): Promise<any> { return this.send("cookie.get", { name, tabId }); }
   async deleteCookie(name: string, tabId = "default"): Promise<void> { await this.send("cookie.delete", { name, tabId }); }
   async listCookies(tabId = "default"): Promise<any[]> { return this.send<any[]>("cookie.list", { tabId }); }
 
-  // ── Interception ──────────────────────────────────────────────────────────────
+  // ── Interception ──────────────────────────────────────────────────────────
   async addInterceptRule(action: "block" | "redirect" | "modifyHeaders", pattern: string, options: { redirectUrl?: string; headers?: Record<string, string> } = {}, tabId = "default"): Promise<void> {
     await this.send("intercept.rule.add", { action, pattern, ...options, tabId });
   }
   async clearInterceptRules(tabId = "default"): Promise<void> { await this.send("intercept.rule.clear", { tabId }); }
 
-  // ── Network capture ───────────────────────────────────────────────────────────
+  // ── Network capture ───────────────────────────────────────────────────────
   async captureStart(tabId = "default"): Promise<void> { await this.send("capture.start", { tabId }); }
   async captureStop(tabId = "default"): Promise<void> { await this.send("capture.stop", { tabId }); }
   async captureRequests(tabId = "default"): Promise<any[]> { return this.send<any[]>("capture.requests", { tabId }); }
@@ -417,11 +403,61 @@ export class PiggyClient {
   async captureStorage(tabId = "default"): Promise<any> { return this.send("capture.storage", { tabId }); }
   async captureClear(tabId = "default"): Promise<void> { await this.send("capture.clear", { tabId }); }
 
-  // ── Session ───────────────────────────────────────────────────────────────────
+  // ── Session ───────────────────────────────────────────────────────────────
   async sessionExport(tabId = "default"): Promise<any> { return this.send("session.export", { tabId }); }
   async sessionImport(data: any, tabId = "default"): Promise<void> { await this.send("session.import", { data, tabId }); }
 
-  // ── Expose Function ───────────────────────────────────────────────────────────
+  // ── Session persistence (opt-in) ──────────────────────────────────────────
+  // WS frames and pings are NOT saved by default — you must opt in.
+  // Files are written to cwd (same folder as cookies.json / profile.json).
+
+  /** Enable or disable saving WebSocket frames to ws.json in cwd */
+  async sessionWsSave(enabled = true): Promise<void> {
+    await this.send("session.ws.save", { enabled });
+  }
+
+  /** Enable or disable saving ping log to pings.json in cwd */
+  async sessionPingsSave(enabled = true): Promise<void> {
+    await this.send("session.pings.save", { enabled });
+  }
+
+  /** Get all data file paths for the current session */
+  async sessionPaths(): Promise<{
+    workDir: string;
+    cookies: string;
+    profile: string;
+    ws: string;
+    pings: string;
+  }> {
+    return this.send("session.paths", {});
+  }
+
+  /** Get path to cookies.json */
+  async sessionCookiesPath(): Promise<string> {
+    return this.send("session.cookies.path", {});
+  }
+
+  /** Get path to profile.json */
+  async sessionProfilePath(): Promise<string> {
+    return this.send("session.profile.path", {});
+  }
+
+  /** Get path to ws.json */
+  async sessionWsPath(): Promise<string> {
+    return this.send("session.ws.path", {});
+  }
+
+  /** Get path to pings.json */
+  async sessionPingsPath(): Promise<string> {
+    return this.send("session.pings.path", {});
+  }
+
+  /** Reload cookies.json and profile.json from disk without restarting */
+  async sessionReload(): Promise<void> {
+    await this.send("session.reload", {});
+  }
+
+  // ── Expose Function ───────────────────────────────────────────────────────
   async exposeFunction(name: string, handler: (data: any) => Promise<any> | any, tabId = "default"): Promise<void> {
     if (!this.eventHandlers.has(tabId)) this.eventHandlers.set(tabId, new Map());
     this.eventHandlers.get(tabId)!.set(name, async (data: any) => {
@@ -448,25 +484,20 @@ export class PiggyClient {
     logger.info(`[${tabId}] cleared all exposed functions`);
   }
 
-  // ── Proxy ─────────────────────────────────────────────────────────────────────
+  // ── Proxy ─────────────────────────────────────────────────────────────────
 
-  // Load a proxy list file from disk (one proxy per line, any format)
   async proxyLoad(path: string): Promise<void> {
     await this.send("proxy.load", { path });
   }
 
-  // Fetch a proxy list from a URL
   async proxyFetch(url: string): Promise<void> {
     await this.send("proxy.fetch", { url });
   }
 
-  // Load an OpenVPN config file
   async proxyOvpn(path: string): Promise<void> {
     await this.send("proxy.ovpn", { path });
   }
 
-  // Set a single proxy directly.
-  // Pass { host, port, type, user?, pass? } OR { proxy: "socks5://user:pass@host:port" }
   async proxySet(opts: {
     host?: string;
     port?: number;
@@ -478,85 +509,59 @@ export class PiggyClient {
     await this.send("proxy.set", opts as Record<string, any>);
   }
 
-  // Health check all proxies in parallel (20 concurrent). Fires proxy:alive / proxy:dead events.
   async proxyTest(): Promise<void> {
     await this.send("proxy.test", {});
   }
 
-  // Abort an in-progress proxy health check
   async proxyTestStop(): Promise<void> {
     await this.send("proxy.test.stop", {});
   }
 
-  // Rotate to the next proxy in the list
   async proxyNext(): Promise<void> {
     await this.send("proxy.next", {});
   }
 
-  // Disable proxy — use real IP
   async proxyDisable(): Promise<void> {
     await this.send("proxy.disable", {});
   }
 
-  // Re-enable proxy after disable
   async proxyEnable(): Promise<void> {
     await this.send("proxy.enable", {});
   }
 
-  // Get current proxy details + health status
   async proxyCurrent(): Promise<{
-    host: string;
-    port: number;
-    type: string;
-    user?: string;
-    alive: boolean;
-    latencyMs?: number;
+    host: string; port: number; type: string;
+    user?: string; alive: boolean; latencyMs?: number;
   }> {
     return this.send("proxy.current", {});
   }
 
-  // Get stats: total / alive / dead / current index / checking
   async proxyStats(): Promise<{
-    total: number;
-    alive: number;
-    dead: number;
-    index: number;
-    checking: boolean;
+    total: number; alive: number; dead: number;
+    index: number; checking: boolean;
   }> {
     return this.send("proxy.stats", {});
   }
 
-  // List all proxies with per-entry health. Pass limit to cap the response.
   async proxyList(limit?: number): Promise<{
-    host: string;
-    port: number;
-    type: string;
-    alive: boolean;
-    latencyMs?: number;
+    host: string; port: number; type: string;
+    alive: boolean; latencyMs?: number;
   }[]> {
     return this.send("proxy.list", limit !== undefined ? { limit } : {});
   }
 
-  // Set rotation mode: "none" | "timed" | "perrequest"
-  // interval is in milliseconds, only used for "timed" mode
   async proxyRotation(mode: "none" | "timed" | "perrequest", interval?: number): Promise<void> {
     await this.send("proxy.rotation", { mode, ...(interval !== undefined ? { interval } : {}) });
   }
 
-  // Configure proxy behaviour
   async proxyConfig(opts: { skipDead?: boolean; autoCheck?: boolean }): Promise<void> {
     await this.send("proxy.config", opts as Record<string, any>);
   }
 
-  // Save proxy list to file. filter: "alive" | "dead" | "all"
   async proxySave(path: string, filter: "alive" | "dead" | "all" = "all"): Promise<void> {
     await this.send("proxy.save", { path, filter });
   }
 
-  // Subscribe to proxy events pushed from the server.
-  // Events: proxy:loaded | proxy:changed | proxy:alive | proxy:dead |
-  //         proxy:check:started | proxy:check:done | proxy:exhausted |
-  //         proxy:fetch:failed | proxy:ovpn:loaded
   onProxyEvent(event: string, handler: (data: any) => void): () => void {
     return this.onEvent(event, "*", handler);
   }
