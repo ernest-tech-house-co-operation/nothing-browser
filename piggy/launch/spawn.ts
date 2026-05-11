@@ -1,4 +1,3 @@
-// piggy/launch/spawn.ts
 import { spawn as nodeSpawn } from "child_process";
 import { execSync } from "child_process";
 import { platform } from "os";
@@ -8,13 +7,11 @@ import logger from "../logger";
 let activeProcess: any = null;
 const extraProcesses: any[] = [];
 
-// Runtime detection without importing "bun" at build time
 const isBun = typeof (globalThis as any).Bun !== 'undefined';
 
 export function killAllBrowsers(): void {
   try {
     logger.info('Cleaning up existing browser processes...');
-    
     if (platform() === 'win32') {
       execSync('taskkill /F /IM nothing-browser-headless.exe 2>nul || true', { stdio: 'ignore' });
       execSync('taskkill /F /IM nothing-browser-headful.exe 2>nul || true', { stdio: 'ignore' });
@@ -42,7 +39,6 @@ export async function spawnBrowser(mode: BinaryMode = 'headless'): Promise<strin
   logger.info(`Spawning Nothing Browser (${mode}) from: ${binaryPath}`);
 
   if (isBun) {
-    // Bun runtime - use Bun.spawn
     const Bun = (globalThis as any).Bun;
     activeProcess = Bun.spawn([binaryPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -66,7 +62,6 @@ export async function spawnBrowser(mode: BinaryMode = 'headless'): Promise<strin
       activeProcess = null;
     });
   } else {
-    // Node.js runtime
     activeProcess = nodeSpawn(binaryPath, [], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
@@ -113,7 +108,6 @@ export async function spawnBrowserOnSocket(
   logger.info(`Spawning browser (${mode}) on socket: ${socketName}`);
 
   if (isBun) {
-    // Bun runtime
     const Bun = (globalThis as any).Bun;
     const proc = Bun.spawn([binaryPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -126,7 +120,6 @@ export async function spawnBrowserOnSocket(
       logger.warn(`Browser on socket ${socketName} exited with code: ${code}`);
     });
   } else {
-    // Node.js runtime
     const proc = nodeSpawn(binaryPath, [], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, PIGGY_SOCKET: socketName },
@@ -153,7 +146,7 @@ export function killBrowser(): void {
     }
     activeProcess = null;
   }
-  
+
   for (const proc of extraProcesses) {
     if (isBun) {
       proc.kill();

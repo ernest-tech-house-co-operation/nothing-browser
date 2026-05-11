@@ -6105,7 +6105,7 @@ var require_file_uri_to_path = __commonJS((exports, module) => {
 
 // node_modules/bindings/bindings.js
 var require_bindings = __commonJS((exports, module) => {
-  var __filename = "/home/pease/projects/libraries/browserlibs/nothing-browser/node_modules/bindings/bindings.js";
+  var __filename = "C:\\Users\\CENTURY CYBER\\Desktop\\piggy\\nothing-browser\\node_modules\\bindings\\bindings.js";
   var fs = __require("fs");
   var path = __require("path");
   var fileURLToPath = require_file_uri_to_path();
@@ -6871,6 +6871,19 @@ var BINARY_NAMES = {
 };
 function detectBinary(mode = "headless") {
   const cwd = process.cwd();
+  if (mode !== "headless" && mode !== "headful") {
+    if (existsSync(mode)) {
+      logger_default.success(`Binary found (custom path): ${mode}`);
+      return mode;
+    }
+    const abs = join(cwd, mode);
+    if (existsSync(abs)) {
+      logger_default.success(`Binary found (custom path): ${abs}`);
+      return abs;
+    }
+    logger_default.error(`Binary not found at custom path: ${mode}`);
+    return null;
+  }
   const name = BINARY_NAMES[mode];
   if (process.platform === "win32") {
     const p2 = join(cwd, `${name}.exe`);
@@ -7029,54 +7042,113 @@ import { connect } from "net";
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import { platform as platform2 } from "os";
-var SOCKET_PATH = platform2() === "win32" ? "\\\\.\\pipe\\piggy" : "/tmp/piggy";
+var DEFAULT_SOCKET_PATH = platform2() === "win32" ? "\\\\.\\pipe\\piggy" : "/tmp/piggy";
+
+class SocketTransport {
+  sock;
+  constructor(sock) {
+    this.sock = sock;
+  }
+  send(data) {
+    this.sock.write(data);
+  }
+  on(event, handler) {
+    this.sock.on(event, handler);
+  }
+  destroy() {
+    this.sock.destroy();
+  }
+}
+
+class HttpTransport {
+  host;
+  key;
+  dataHandlers = [];
+  errorHandlers = [];
+  closeHandlers = [];
+  _destroyed = false;
+  constructor(host, key) {
+    this.host = host.replace(/\/$/, "");
+    this.key = key;
+  }
+  on(event, handler) {
+    if (event === "data")
+      this.dataHandlers.push(handler);
+    if (event === "error")
+      this.errorHandlers.push(handler);
+    if (event === "close")
+      this.closeHandlers.push(handler);
+  }
+  send(data) {
+    if (this._destroyed)
+      return;
+    fetch(this.host, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Piggy-Key": this.key
+      },
+      body: data
+    }).then(async (res) => {
+      if (!res.ok) {
+        const text2 = await res.text().catch(() => `HTTP ${res.status}`);
+        this.errorHandlers.forEach((h) => h(new Error(`HTTP ${res.status}: ${text2}`)));
+        return;
+      }
+      const text = await res.text();
+      const lines = text.split(`
+`).filter((l) => l.trim());
+      for (const line of lines) {
+        this.dataHandlers.forEach((h) => h(line + `
+`));
+      }
+    }).catch((e) => {
+      if (!this._destroyed) {
+        this.errorHandlers.forEach((h) => h(e));
+      }
+    });
+  }
+  destroy() {
+    this._destroyed = true;
+    this.closeHandlers.forEach((h) => h());
+  }
+}
 
 class PiggyClient {
   socketPath;
-  socket = null;
+  httpHost = null;
+  httpKey = null;
+  transport = null;
   reqId = 0;
   pending = new Map;
   buf = "";
-  eventBuffer = "";
   eventHandlers = new Map;
   globalEventHandlers = new Map;
-  constructor(socketPath = SOCKET_PATH) {
-    this.socketPath = socketPath;
+  constructor(arg) {
+    if (arg && typeof arg === "object") {
+      this.socketPath = "";
+      this.httpHost = arg.host.replace(/\/$/, "");
+      this.httpKey = arg.key;
+    } else {
+      this.socketPath = arg ?? DEFAULT_SOCKET_PATH;
+    }
     this.eventHandlers.set("default", new Map);
   }
   connect() {
+    if (this.httpHost)
+      return this._connectHttp();
+    return this._connectSocket();
+  }
+  _connectSocket() {
     return new Promise((resolve, reject) => {
       logger_default.info(`Connecting to socket: ${this.socketPath}`);
       const sock = connect(this.socketPath);
       sock.setEncoding("utf8");
       sock.on("connect", () => {
-        this.socket = sock;
-        logger_default.success("Connected to Piggy server");
+        this.transport = new SocketTransport(sock);
+        this._wireTransport();
+        logger_default.success("Connected to Piggy server (socket)");
         resolve();
-      });
-      sock.on("data", (chunk) => {
-        this.eventBuffer += chunk;
-        const lines = this.eventBuffer.split(`
-`);
-        this.eventBuffer = lines.pop();
-        for (const line of lines) {
-          if (!line.trim())
-            continue;
-          try {
-            const msg = JSON.parse(line);
-            if (msg.type === "event") {
-              this.handleEvent(msg);
-              continue;
-            }
-            const p = this.pending.get(msg.id);
-            if (p) {
-              this.pending.delete(msg.id);
-              msg.ok ? p.resolve(msg.data) : p.reject(new Error(msg.data ?? "command failed"));
-            }
-          } catch {
-            logger_default.error(`Bad JSON from server: ${line}`);
-          }
-        }
       });
       sock.on("error", (e) => {
         for (const p of this.pending.values())
@@ -7084,11 +7156,65 @@ class PiggyClient {
         this.pending.clear();
         reject(e);
       });
-      sock.on("close", () => {
-        for (const p of this.pending.values())
-          p.reject(new Error("Socket closed"));
-        this.pending.clear();
+    });
+  }
+  async _connectHttp() {
+    logger_default.info(`Connecting to Piggy server (HTTP): ${this.httpHost}`);
+    try {
+      const res = await fetch(this.httpHost, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Piggy-Key": this.httpKey
+        },
+        body: "hello"
       });
+      if (res.status === 401) {
+        throw new Error("Unauthorized — invalid X-Piggy-Key");
+      }
+      this.transport = new HttpTransport(this.httpHost, this.httpKey);
+      this._wireTransport();
+      logger_default.success(`Connected to Piggy server (HTTP): ${this.httpHost}`);
+    } catch (e) {
+      throw new Error(`Failed to connect to Piggy HTTP server: ${e.message}`);
+    }
+  }
+  _wireTransport() {
+    if (!this.transport)
+      return;
+    this.transport.on("data", (chunk) => {
+      this.buf += chunk;
+      const lines = this.buf.split(`
+`);
+      this.buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim())
+          continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.type === "event") {
+            this.handleEvent(msg);
+            continue;
+          }
+          const p = this.pending.get(msg.id);
+          if (p) {
+            this.pending.delete(msg.id);
+            msg.ok ? p.resolve(msg.data) : p.reject(new Error(msg.data ?? "command failed"));
+          }
+        } catch {
+          logger_default.error(`Bad JSON from server: ${line}`);
+        }
+      }
+    });
+    this.transport.on("error", (e) => {
+      for (const p of this.pending.values())
+        p.reject(e);
+      this.pending.clear();
+    });
+    this.transport.on("close", () => {
+      for (const p of this.pending.values())
+        p.reject(new Error("Connection closed"));
+      this.pending.clear();
     });
   }
   handleEvent(event) {
@@ -7152,7 +7278,6 @@ class PiggyClient {
           } catch {}
         }
       }
-      return;
     }
   }
   onEvent(eventName, tabId, handler) {
@@ -7164,16 +7289,16 @@ class PiggyClient {
     return () => this.globalEventHandlers.get(key)?.delete(handler);
   }
   disconnect() {
-    this.socket?.destroy();
-    this.socket = null;
+    this.transport?.destroy();
+    this.transport = null;
   }
   send(cmd, payload = {}) {
     return new Promise((resolve, reject) => {
-      if (!this.socket)
+      if (!this.transport)
         return reject(new Error("Not connected"));
       const id = String(++this.reqId);
       this.pending.set(id, { resolve, reject });
-      this.socket.write(JSON.stringify({ id, cmd, payload }) + `
+      this.transport.send(JSON.stringify({ id, cmd, payload }) + `
 `);
     });
   }
@@ -7343,6 +7468,30 @@ class PiggyClient {
   async sessionImport(data, tabId = "default") {
     await this.send("session.import", { data, tabId });
   }
+  async sessionWsSave(enabled = true) {
+    await this.send("session.ws.save", { enabled });
+  }
+  async sessionPingsSave(enabled = true) {
+    await this.send("session.pings.save", { enabled });
+  }
+  async sessionPaths() {
+    return this.send("session.paths", {});
+  }
+  async sessionCookiesPath() {
+    return this.send("session.cookies.path", {});
+  }
+  async sessionProfilePath() {
+    return this.send("session.profile.path", {});
+  }
+  async sessionWsPath() {
+    return this.send("session.ws.path", {});
+  }
+  async sessionPingsPath() {
+    return this.send("session.pings.path", {});
+  }
+  async sessionReload() {
+    await this.send("session.reload", {});
+  }
   async exposeFunction(name, handler, tabId = "default") {
     if (!this.eventHandlers.has(tabId))
       this.eventHandlers.set(tabId, new Map);
@@ -7368,6 +7517,54 @@ class PiggyClient {
   async clearExposedFunctions(tabId = "default") {
     this.eventHandlers.set(tabId, new Map);
     logger_default.info(`[${tabId}] cleared all exposed functions`);
+  }
+  async proxyLoad(path) {
+    await this.send("proxy.load", { path });
+  }
+  async proxyFetch(url) {
+    await this.send("proxy.fetch", { url });
+  }
+  async proxyOvpn(path) {
+    await this.send("proxy.ovpn", { path });
+  }
+  async proxySet(opts) {
+    await this.send("proxy.set", opts);
+  }
+  async proxyTest() {
+    await this.send("proxy.test", {});
+  }
+  async proxyTestStop() {
+    await this.send("proxy.test.stop", {});
+  }
+  async proxyNext() {
+    await this.send("proxy.next", {});
+  }
+  async proxyDisable() {
+    await this.send("proxy.disable", {});
+  }
+  async proxyEnable() {
+    await this.send("proxy.enable", {});
+  }
+  async proxyCurrent() {
+    return this.send("proxy.current", {});
+  }
+  async proxyStats() {
+    return this.send("proxy.stats", {});
+  }
+  async proxyList(limit) {
+    return this.send("proxy.list", limit !== undefined ? { limit } : {});
+  }
+  async proxyRotation(mode, interval) {
+    await this.send("proxy.rotation", { mode, ...interval !== undefined ? { interval } : {} });
+  }
+  async proxyConfig(opts) {
+    await this.send("proxy.config", opts);
+  }
+  async proxySave(path, filter = "all") {
+    await this.send("proxy.save", { path, filter });
+  }
+  onProxyEvent(event, handler) {
+    return this.onEvent(event, "*", handler);
   }
 }
 
@@ -21803,12 +22000,12 @@ var _Elysia = class _Elysia2 {
     }), this) : (typeof this.server?.reload == "function" && this.server.reload(this.server || {}), this._handle = composeGeneralHandler(this), this);
   }
   get fetch() {
-    const fetch = this.config.aot ? composeGeneralHandler(this) : createDynamicHandler(this);
+    const fetch2 = this.config.aot ? composeGeneralHandler(this) : createDynamicHandler(this);
     return Object.defineProperty(this, "fetch", {
-      value: fetch,
+      value: fetch2,
       configurable: true,
       writable: true
-    }), fetch;
+    }), fetch2;
   }
   get modules() {
     return this.promisedModules;
@@ -28584,7 +28781,7 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
       return client.hover(selector, t2);
     }), `hover(${selector})`),
     type: (selector, text, opts) => withErrScreen(() => withTab(async (t2) => {
-      await client.waitForSelector(selector, 15000, t2);
+      await client.waitForSelector(selector, 30000, t2);
       if (humanMode && !opts?.fact) {
         const seq = humanTypeSequence(text);
         let current = "";
@@ -28593,7 +28790,15 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
             current = current.slice(0, -1);
           else
             current += action;
-          await client.type(selector, current, t2);
+          await client.evaluate(`
+            (function() {
+              const el = document.querySelector('${selector}');
+              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+              nativeSetter.call(el, '${current.replace(/'/g, "\\'")}');
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            })()
+          `, t2);
           const wpm = opts?.wpm ?? 120;
           const msPerChar = Math.round(60000 / (wpm * 5));
           await randomDelay(msPerChar * 0.5, msPerChar * 1.8);
@@ -28606,6 +28811,9 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
       } else {
         await client.type(selector, text, t2);
       }
+      await client.evaluate(`
+        document.querySelector('${selector}').dispatchEvent(new Event('blur', { bubbles: true }))
+      `, t2);
       logger_default.success(`[${name}] typed into: ${selector}`);
       return true;
     }), `type(${selector})`),
@@ -28949,6 +29157,14 @@ var piggy = {
     logger_default.info(`[piggy] launched — tab mode: "${_tabMode}", binary: "${binaryMode}"`);
     return piggy;
   },
+  connect: async (opts) => {
+    _tabMode = "tab";
+    _client = new PiggyClient({ host: opts.host, key: opts.key });
+    await _client.connect();
+    setClient(_client);
+    logger_default.info(`[piggy] connected (HTTP) → ${opts.host}`);
+    return piggy;
+  },
   register: async (name, url2, opts) => {
     if (!url2?.trim())
       throw new Error(`No URL for site "${name}"`);
@@ -28956,12 +29172,11 @@ var piggy = {
     const poolSize = opts?.pool ?? 0;
     if (_tabMode === "tab") {
       if (!_client)
-        throw new Error("No client. Call piggy.launch() first.");
+        throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
       if (poolSize > 1) {
         const pool = new TabPool(_client, poolSize, url2, name);
         await pool.init();
-        const firstTabId = "default";
-        const siteObj = createSiteObject(name, url2, _client, firstTabId, pool);
+        const siteObj = createSiteObject(name, url2, _client, "default", pool);
         _sites[name] = siteObj;
         piggy[name] = siteObj;
         logger_default.success(`[${name}] registered with pool of ${poolSize} tabs`);
@@ -28997,17 +29212,99 @@ var piggy = {
   },
   expose: async (name, handler, tabId = "default") => {
     if (!_client)
-      throw new Error("No client. Call piggy.launch() first.");
+      throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
     await _client.exposeFunction(name, handler, tabId);
     logger_default.success(`[piggy] exposed global function: ${name}`);
     return piggy;
   },
   unexpose: async (name, tabId = "default") => {
     if (!_client)
-      throw new Error("No client. Call piggy.launch() first.");
+      throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
     await _client.unexposeFunction(name, tabId);
     logger_default.info(`[piggy] unexposed function: ${name}`);
     return piggy;
+  },
+  proxy: {
+    load: (path) => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyLoad(path);
+    },
+    fetch: (url2) => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyFetch(url2);
+    },
+    ovpn: (path) => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyOvpn(path);
+    },
+    set: (opts) => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxySet(opts);
+    },
+    test: () => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyTest();
+    },
+    testStop: () => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyTestStop();
+    },
+    next: () => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyNext();
+    },
+    disable: () => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyDisable();
+    },
+    enable: () => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyEnable();
+    },
+    current: () => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyCurrent();
+    },
+    stats: () => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyStats();
+    },
+    list: (limit) => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyList(limit);
+    },
+    rotation: (mode, interval) => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyRotation(mode, interval);
+    },
+    config: (opts) => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxyConfig(opts);
+    },
+    save: (path, filter) => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.proxySave(path, filter);
+    },
+    on: (event, handler) => {
+      if (!_client)
+        throw new Error("No client");
+      return _client.onProxyEvent(event, handler);
+    }
   },
   serve: (port, opts) => startServer(port, opts?.hostname, opts),
   stopServer,

@@ -2,15 +2,32 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import logger from '../logger';
 
-export type BinaryMode = 'headless' | 'headful';
+export type BinaryMode = 'headless' | 'headful' | (string & {});
 
-const BINARY_NAMES: Record<BinaryMode, string> = {
+const BINARY_NAMES: Record<string, string> = {
   headless: 'nothing-browser-headless',
   headful:  'nothing-browser-headful',
 };
 
 export function detectBinary(mode: BinaryMode = 'headless'): string | null {
   const cwd = process.cwd();
+
+  // Custom path passed directly
+  if (mode !== 'headless' && mode !== 'headful') {
+    if (existsSync(mode)) {
+      logger.success(`Binary found (custom path): ${mode}`);
+      return mode;
+    }
+    // try relative to cwd
+    const abs = join(cwd, mode);
+    if (existsSync(abs)) {
+      logger.success(`Binary found (custom path): ${abs}`);
+      return abs;
+    }
+    logger.error(`Binary not found at custom path: ${mode}`);
+    return null;
+  }
+
   const name = BINARY_NAMES[mode];
 
   // Windows

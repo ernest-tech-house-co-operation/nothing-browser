@@ -1,6 +1,6 @@
 {
   "name": "nothing-browser",
-  "version": "0.0.17",
+  "version": "0.0.21",
   "description": "Browser automation library powered by Nothing Browser",
   "homepage": "https://github.com/ernest-tech-house-co-operation/nothing-browser#readme",
   "repository": {
@@ -51,7 +51,8 @@
   "dependencies": {
     "@elysiajs/openapi": "^1.4.15",
     "better-sqlite3": "^12.9.0",
-    "elysia": "^1.0.0"
+    "elysia": "^1.0.0",
+    "ernest-logger": "2.0.4"
   },
   "peerDependencies": {
     "elysia": "^1.0.0"
@@ -59,7 +60,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "bun-types": "latest",
-    "typescript": "^5.8.0"
+    "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=18.0.0",

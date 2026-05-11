@@ -745,6 +745,19 @@ var BINARY_NAMES = {
 };
 function detectBinary(mode = "headless") {
   const cwd = process.cwd();
+  if (mode !== "headless" && mode !== "headful") {
+    if (existsSync(mode)) {
+      logger_default.success(`Binary found (custom path): ${mode}`);
+      return mode;
+    }
+    const abs = join(cwd, mode);
+    if (existsSync(abs)) {
+      logger_default.success(`Binary found (custom path): ${abs}`);
+      return abs;
+    }
+    logger_default.error(`Binary not found at custom path: ${mode}`);
+    return null;
+  }
   const name = BINARY_NAMES[mode];
   if (process.platform === "win32") {
     const p2 = join(cwd, `${name}.exe`);

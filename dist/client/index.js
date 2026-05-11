@@ -736,54 +736,113 @@ logger.info("logger initialized");
 var logger_default = logger;
 
 // piggy/client/index.ts
-var SOCKET_PATH = platform() === "win32" ? "\\\\.\\pipe\\piggy" : "/tmp/piggy";
+var DEFAULT_SOCKET_PATH = platform() === "win32" ? "\\\\.\\pipe\\piggy" : "/tmp/piggy";
+
+class SocketTransport {
+  sock;
+  constructor(sock) {
+    this.sock = sock;
+  }
+  send(data) {
+    this.sock.write(data);
+  }
+  on(event, handler) {
+    this.sock.on(event, handler);
+  }
+  destroy() {
+    this.sock.destroy();
+  }
+}
+
+class HttpTransport {
+  host;
+  key;
+  dataHandlers = [];
+  errorHandlers = [];
+  closeHandlers = [];
+  _destroyed = false;
+  constructor(host, key) {
+    this.host = host.replace(/\/$/, "");
+    this.key = key;
+  }
+  on(event, handler) {
+    if (event === "data")
+      this.dataHandlers.push(handler);
+    if (event === "error")
+      this.errorHandlers.push(handler);
+    if (event === "close")
+      this.closeHandlers.push(handler);
+  }
+  send(data) {
+    if (this._destroyed)
+      return;
+    fetch(this.host, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Piggy-Key": this.key
+      },
+      body: data
+    }).then(async (res) => {
+      if (!res.ok) {
+        const text2 = await res.text().catch(() => `HTTP ${res.status}`);
+        this.errorHandlers.forEach((h) => h(new Error(`HTTP ${res.status}: ${text2}`)));
+        return;
+      }
+      const text = await res.text();
+      const lines = text.split(`
+`).filter((l) => l.trim());
+      for (const line of lines) {
+        this.dataHandlers.forEach((h) => h(line + `
+`));
+      }
+    }).catch((e) => {
+      if (!this._destroyed) {
+        this.errorHandlers.forEach((h) => h(e));
+      }
+    });
+  }
+  destroy() {
+    this._destroyed = true;
+    this.closeHandlers.forEach((h) => h());
+  }
+}
 
 class PiggyClient {
   socketPath;
-  socket = null;
+  httpHost = null;
+  httpKey = null;
+  transport = null;
   reqId = 0;
   pending = new Map;
   buf = "";
-  eventBuffer = "";
   eventHandlers = new Map;
   globalEventHandlers = new Map;
-  constructor(socketPath = SOCKET_PATH) {
-    this.socketPath = socketPath;
+  constructor(arg) {
+    if (arg && typeof arg === "object") {
+      this.socketPath = "";
+      this.httpHost = arg.host.replace(/\/$/, "");
+      this.httpKey = arg.key;
+    } else {
+      this.socketPath = arg ?? DEFAULT_SOCKET_PATH;
+    }
     this.eventHandlers.set("default", new Map);
   }
   connect() {
+    if (this.httpHost)
+      return this._connectHttp();
+    return this._connectSocket();
+  }
+  _connectSocket() {
     return new Promise((resolve, reject) => {
       logger_default.info(`Connecting to socket: ${this.socketPath}`);
       const sock = connect(this.socketPath);
       sock.setEncoding("utf8");
       sock.on("connect", () => {
-        this.socket = sock;
-        logger_default.success("Connected to Piggy server");
+        this.transport = new SocketTransport(sock);
+        this._wireTransport();
+        logger_default.success("Connected to Piggy server (socket)");
         resolve();
-      });
-      sock.on("data", (chunk) => {
-        this.eventBuffer += chunk;
-        const lines = this.eventBuffer.split(`
-`);
-        this.eventBuffer = lines.pop();
-        for (const line of lines) {
-          if (!line.trim())
-            continue;
-          try {
-            const msg = JSON.parse(line);
-            if (msg.type === "event") {
-              this.handleEvent(msg);
-              continue;
-            }
-            const p = this.pending.get(msg.id);
-            if (p) {
-              this.pending.delete(msg.id);
-              msg.ok ? p.resolve(msg.data) : p.reject(new Error(msg.data ?? "command failed"));
-            }
-          } catch {
-            logger_default.error(`Bad JSON from server: ${line}`);
-          }
-        }
       });
       sock.on("error", (e) => {
         for (const p of this.pending.values())
@@ -791,11 +850,65 @@ class PiggyClient {
         this.pending.clear();
         reject(e);
       });
-      sock.on("close", () => {
-        for (const p of this.pending.values())
-          p.reject(new Error("Socket closed"));
-        this.pending.clear();
+    });
+  }
+  async _connectHttp() {
+    logger_default.info(`Connecting to Piggy server (HTTP): ${this.httpHost}`);
+    try {
+      const res = await fetch(this.httpHost, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Piggy-Key": this.httpKey
+        },
+        body: "hello"
       });
+      if (res.status === 401) {
+        throw new Error("Unauthorized — invalid X-Piggy-Key");
+      }
+      this.transport = new HttpTransport(this.httpHost, this.httpKey);
+      this._wireTransport();
+      logger_default.success(`Connected to Piggy server (HTTP): ${this.httpHost}`);
+    } catch (e) {
+      throw new Error(`Failed to connect to Piggy HTTP server: ${e.message}`);
+    }
+  }
+  _wireTransport() {
+    if (!this.transport)
+      return;
+    this.transport.on("data", (chunk) => {
+      this.buf += chunk;
+      const lines = this.buf.split(`
+`);
+      this.buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim())
+          continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.type === "event") {
+            this.handleEvent(msg);
+            continue;
+          }
+          const p = this.pending.get(msg.id);
+          if (p) {
+            this.pending.delete(msg.id);
+            msg.ok ? p.resolve(msg.data) : p.reject(new Error(msg.data ?? "command failed"));
+          }
+        } catch {
+          logger_default.error(`Bad JSON from server: ${line}`);
+        }
+      }
+    });
+    this.transport.on("error", (e) => {
+      for (const p of this.pending.values())
+        p.reject(e);
+      this.pending.clear();
+    });
+    this.transport.on("close", () => {
+      for (const p of this.pending.values())
+        p.reject(new Error("Connection closed"));
+      this.pending.clear();
     });
   }
   handleEvent(event) {
@@ -859,7 +972,6 @@ class PiggyClient {
           } catch {}
         }
       }
-      return;
     }
   }
   onEvent(eventName, tabId, handler) {
@@ -871,16 +983,16 @@ class PiggyClient {
     return () => this.globalEventHandlers.get(key)?.delete(handler);
   }
   disconnect() {
-    this.socket?.destroy();
-    this.socket = null;
+    this.transport?.destroy();
+    this.transport = null;
   }
   send(cmd, payload = {}) {
     return new Promise((resolve, reject) => {
-      if (!this.socket)
+      if (!this.transport)
         return reject(new Error("Not connected"));
       const id = String(++this.reqId);
       this.pending.set(id, { resolve, reject });
-      this.socket.write(JSON.stringify({ id, cmd, payload }) + `
+      this.transport.send(JSON.stringify({ id, cmd, payload }) + `
 `);
     });
   }
@@ -1050,6 +1162,30 @@ class PiggyClient {
   async sessionImport(data, tabId = "default") {
     await this.send("session.import", { data, tabId });
   }
+  async sessionWsSave(enabled = true) {
+    await this.send("session.ws.save", { enabled });
+  }
+  async sessionPingsSave(enabled = true) {
+    await this.send("session.pings.save", { enabled });
+  }
+  async sessionPaths() {
+    return this.send("session.paths", {});
+  }
+  async sessionCookiesPath() {
+    return this.send("session.cookies.path", {});
+  }
+  async sessionProfilePath() {
+    return this.send("session.profile.path", {});
+  }
+  async sessionWsPath() {
+    return this.send("session.ws.path", {});
+  }
+  async sessionPingsPath() {
+    return this.send("session.pings.path", {});
+  }
+  async sessionReload() {
+    await this.send("session.reload", {});
+  }
   async exposeFunction(name, handler, tabId = "default") {
     if (!this.eventHandlers.has(tabId))
       this.eventHandlers.set(tabId, new Map);
@@ -1075,6 +1211,54 @@ class PiggyClient {
   async clearExposedFunctions(tabId = "default") {
     this.eventHandlers.set(tabId, new Map);
     logger_default.info(`[${tabId}] cleared all exposed functions`);
+  }
+  async proxyLoad(path) {
+    await this.send("proxy.load", { path });
+  }
+  async proxyFetch(url) {
+    await this.send("proxy.fetch", { url });
+  }
+  async proxyOvpn(path) {
+    await this.send("proxy.ovpn", { path });
+  }
+  async proxySet(opts) {
+    await this.send("proxy.set", opts);
+  }
+  async proxyTest() {
+    await this.send("proxy.test", {});
+  }
+  async proxyTestStop() {
+    await this.send("proxy.test.stop", {});
+  }
+  async proxyNext() {
+    await this.send("proxy.next", {});
+  }
+  async proxyDisable() {
+    await this.send("proxy.disable", {});
+  }
+  async proxyEnable() {
+    await this.send("proxy.enable", {});
+  }
+  async proxyCurrent() {
+    return this.send("proxy.current", {});
+  }
+  async proxyStats() {
+    return this.send("proxy.stats", {});
+  }
+  async proxyList(limit) {
+    return this.send("proxy.list", limit !== undefined ? { limit } : {});
+  }
+  async proxyRotation(mode, interval) {
+    await this.send("proxy.rotation", { mode, ...interval !== undefined ? { interval } : {} });
+  }
+  async proxyConfig(opts) {
+    await this.send("proxy.config", opts);
+  }
+  async proxySave(path, filter = "all") {
+    await this.send("proxy.save", { path, filter });
+  }
+  onProxyEvent(event, handler) {
+    return this.onEvent(event, "*", handler);
   }
 }
 export {

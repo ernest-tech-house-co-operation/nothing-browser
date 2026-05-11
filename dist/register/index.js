@@ -6105,7 +6105,7 @@ var require_file_uri_to_path = __commonJS((exports, module) => {
 
 // node_modules/bindings/bindings.js
 var require_bindings = __commonJS((exports, module) => {
-  var __filename = "/home/pease/projects/libraries/browserlibs/nothing-browser/node_modules/bindings/bindings.js";
+  var __filename = "C:\\Users\\CENTURY CYBER\\Desktop\\piggy\\nothing-browser\\node_modules\\bindings\\bindings.js";
   var fs = __require("fs");
   var path = __require("path");
   var fileURLToPath = require_file_uri_to_path();
@@ -23054,7 +23054,7 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
       return client.hover(selector, t2);
     }), `hover(${selector})`),
     type: (selector, text, opts) => withErrScreen(() => withTab(async (t2) => {
-      await client.waitForSelector(selector, 15000, t2);
+      await client.waitForSelector(selector, 30000, t2);
       if (humanMode && !opts?.fact) {
         const seq = humanTypeSequence(text);
         let current = "";
@@ -23063,7 +23063,15 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
             current = current.slice(0, -1);
           else
             current += action;
-          await client.type(selector, current, t2);
+          await client.evaluate(`
+            (function() {
+              const el = document.querySelector('${selector}');
+              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+              nativeSetter.call(el, '${current.replace(/'/g, "\\'")}');
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            })()
+          `, t2);
           const wpm = opts?.wpm ?? 120;
           const msPerChar = Math.round(60000 / (wpm * 5));
           await randomDelay(msPerChar * 0.5, msPerChar * 1.8);
@@ -23076,6 +23084,9 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
       } else {
         await client.type(selector, text, t2);
       }
+      await client.evaluate(`
+        document.querySelector('${selector}').dispatchEvent(new Event('blur', { bubbles: true }))
+      `, t2);
       logger_default.success(`[${name}] typed into: ${selector}`);
       return true;
     }), `type(${selector})`),

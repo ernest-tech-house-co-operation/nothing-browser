@@ -172,35 +172,46 @@ export function createSiteObject(
         `hover(${selector})`
       ),
 
-    type: (selector: string, text: string, opts?: { delay?: number; retries?: number; fact?: boolean; wpm?: number }) =>
-      withErrScreen(() =>
-        withTab(async t => {
-          await client.waitForSelector(selector, 15000, t);
-          if (humanMode && !opts?.fact) {
-            const seq = humanTypeSequence(text);
-            let current = "";
-            for (const action of seq) {
-              if (action === "BACKSPACE") current = current.slice(0, -1);
-              else current += action;
-              await client.type(selector, current, t);
-              const wpm = opts?.wpm ?? 120;
-              const msPerChar = Math.round(60000 / (wpm * 5));
-              await randomDelay(msPerChar * 0.5, msPerChar * 1.8);
-            }
-          } else if (opts?.delay) {
-            for (const ch of text) {
-              await client.type(selector, ch, t);
-              await new Promise(r => setTimeout(r, opts.delay));
-            }
-          } else {
-            await client.type(selector, text, t);
-          }
-          logger.success(`[${name}] typed into: ${selector}`);
-          return true;
-        }),
-        `type(${selector})`
-      ),
-
+      type: (selector: string, text: string, opts?: { delay?: number; retries?: number; fact?: boolean; wpm?: number }) =>
+  withErrScreen(() =>
+    withTab(async t => {
+      await client.waitForSelector(selector, 30000, t);
+      if (humanMode && !opts?.fact) {
+        const seq = humanTypeSequence(text);
+        let current = "";
+        for (const action of seq) {
+          if (action === "BACKSPACE") current = current.slice(0, -1);
+          else current += action;
+          await client.evaluate(`
+            (function() {
+              const el = document.querySelector('${selector}');
+              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+              nativeSetter.call(el, '${current.replace(/'/g, "\\'")}');
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            })()
+          `, t);
+          const wpm = opts?.wpm ?? 120;
+          const msPerChar = Math.round(60000 / (wpm * 5));
+          await randomDelay(msPerChar * 0.5, msPerChar * 1.8);
+        }
+      } else if (opts?.delay) {
+        for (const ch of text) {
+          await client.type(selector, ch, t);
+          await new Promise(r => setTimeout(r, opts.delay));
+        }
+      } else {
+        await client.type(selector, text, t);
+      }
+      // fire blur so Phoenix/Angular/React pick up the final value
+      await client.evaluate(`
+        document.querySelector('${selector}').dispatchEvent(new Event('blur', { bubbles: true }))
+      `, t);
+      logger.success(`[${name}] typed into: ${selector}`);
+      return true;
+    }),
+    `type(${selector})`
+  ),
     select:   (selector: string, value: string) => withTab(t => client.select(selector, value, t)),
 
     evaluate: (js: string | (() => any), ...args: any[]) => {

@@ -1,14 +1,22 @@
 export declare class PiggyClient {
     private socketPath;
-    private socket;
+    private httpHost;
+    private httpKey;
+    private transport;
     private reqId;
     private pending;
     private buf;
-    private eventBuffer;
     private eventHandlers;
     private globalEventHandlers;
     constructor(socketPath?: string);
+    constructor(opts: {
+        host: string;
+        key: string;
+    });
     connect(): Promise<void>;
+    private _connectSocket;
+    private _connectHttp;
+    private _wireTransport;
     private handleEvent;
     onEvent(eventName: string, tabId: string, handler: (data: any) => void): () => void;
     disconnect(): void;
@@ -72,8 +80,75 @@ export declare class PiggyClient {
     captureClear(tabId?: string): Promise<void>;
     sessionExport(tabId?: string): Promise<any>;
     sessionImport(data: any, tabId?: string): Promise<void>;
+    /** Enable or disable saving WebSocket frames to ws.json in cwd */
+    sessionWsSave(enabled?: boolean): Promise<void>;
+    /** Enable or disable saving ping log to pings.json in cwd */
+    sessionPingsSave(enabled?: boolean): Promise<void>;
+    /** Get all data file paths for the current session */
+    sessionPaths(): Promise<{
+        workDir: string;
+        cookies: string;
+        profile: string;
+        ws: string;
+        pings: string;
+    }>;
+    /** Get path to cookies.json */
+    sessionCookiesPath(): Promise<string>;
+    /** Get path to profile.json */
+    sessionProfilePath(): Promise<string>;
+    /** Get path to ws.json */
+    sessionWsPath(): Promise<string>;
+    /** Get path to pings.json */
+    sessionPingsPath(): Promise<string>;
+    /** Reload cookies.json and profile.json from disk without restarting */
+    sessionReload(): Promise<void>;
     exposeFunction(name: string, handler: (data: any) => Promise<any> | any, tabId?: string): Promise<void>;
     unexposeFunction(name: string, tabId?: string): Promise<void>;
     clearExposedFunctions(tabId?: string): Promise<void>;
+    proxyLoad(path: string): Promise<void>;
+    proxyFetch(url: string): Promise<void>;
+    proxyOvpn(path: string): Promise<void>;
+    proxySet(opts: {
+        host?: string;
+        port?: number;
+        type?: "http" | "https" | "socks5" | "socks4";
+        user?: string;
+        pass?: string;
+        proxy?: string;
+    }): Promise<void>;
+    proxyTest(): Promise<void>;
+    proxyTestStop(): Promise<void>;
+    proxyNext(): Promise<void>;
+    proxyDisable(): Promise<void>;
+    proxyEnable(): Promise<void>;
+    proxyCurrent(): Promise<{
+        host: string;
+        port: number;
+        type: string;
+        user?: string;
+        alive: boolean;
+        latencyMs?: number;
+    }>;
+    proxyStats(): Promise<{
+        total: number;
+        alive: number;
+        dead: number;
+        index: number;
+        checking: boolean;
+    }>;
+    proxyList(limit?: number): Promise<{
+        host: string;
+        port: number;
+        type: string;
+        alive: boolean;
+        latencyMs?: number;
+    }[]>;
+    proxyRotation(mode: "none" | "timed" | "perrequest", interval?: number): Promise<void>;
+    proxyConfig(opts: {
+        skipDead?: boolean;
+        autoCheck?: boolean;
+    }): Promise<void>;
+    proxySave(path: string, filter?: "alive" | "dead" | "all"): Promise<void>;
+    onProxyEvent(event: string, handler: (data: any) => void): () => void;
 }
 //# sourceMappingURL=index.d.ts.map
