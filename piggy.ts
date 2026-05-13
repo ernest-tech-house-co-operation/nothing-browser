@@ -214,4 +214,4 @@ export function usePiggy<Sites extends string>(): TypedPiggy<Sites> {
 
 export type { SiteObject };
 export default piggy;
-export { piggy };
+export { piggy };  

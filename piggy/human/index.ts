@@ -1,4 +1,7 @@
 // piggy/human/index.ts
+import { PiggyClient } from "../client";
+
+// ─── Local human-simulation utilities ────────────────────────────────────────
 
 export function randomDelay(min: number, max: number): Promise<void> {
   return new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min));
@@ -6,7 +9,7 @@ export function randomDelay(min: number, max: number): Promise<void> {
 
 /**
  * Simulates human typing by introducing ~2 random typos and correcting them.
- * Returns an array of { char, isBackspace } actions to replay.
+ * Returns an array of chars / "BACKSPACE" actions to replay.
  */
 export function humanTypeSequence(text: string): string[] {
   const adjacent: Record<string, string[]> = {
@@ -27,7 +30,6 @@ export function humanTypeSequence(text: string): string[] {
   const actions: string[] = [];
   const typoIndices = new Set<number>();
 
-  // Pick ~2 random positions to typo (skip short strings)
   if (text.length > 4) {
     let tries = 0;
     while (typoIndices.size < 2 && tries < 20) {
@@ -40,14 +42,99 @@ export function humanTypeSequence(text: string): string[] {
     if (typoIndices.has(i)) {
       const ch = text[i]!.toLowerCase();
       const neighbors = adjacent[ch];
-        const typo = neighbors
+      const typo = neighbors
         ? neighbors[Math.floor(Math.random() * neighbors.length)] ?? ch
         : ch;
-      actions.push(typo);        // wrong char
-      actions.push("BACKSPACE"); // correct it
+      actions.push(typo);
+      actions.push("BACKSPACE");
     }
     actions.push(text[i]!);
   }
 
   return actions;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Profile types ────────────────────────────────────────────────────────────
+
+export type TypingSpeed  = "slow" | "normal" | "fast";
+export type ClickDelay   = "cautious" | "normal" | "fast";
+export type ScrollSpeed  = "slow" | "normal" | "fast";
+
+export interface HumanProfile {
+  typingSpeed:  TypingSpeed;
+  clickDelay:   ClickDelay;
+  scrollSpeed:  ScrollSpeed;
+  mouseWiggle:  boolean;
+}
+
+// ─── Option types ─────────────────────────────────────────────────────────────
+
+export interface HumanSetOptions {
+  typingSpeed?:  TypingSpeed;
+  clickDelay?:   ClickDelay;
+  scrollSpeed?:  ScrollSpeed;
+  mouseWiggle?:  boolean;
+}
+
+export interface HumanTypeOptions {
+  selector: string;
+  text:     string;
+  /** Clear field first with Ctrl+A + Delete. Default: false. */
+  clear?:   boolean;
+  /** Override the profile typing speed for this call. */
+  speed?:   TypingSpeed;
+}
+
+export interface HumanClickOptions {
+  selector: string;
+  /**
+   * Scroll into view + dispatch all mouse events manually,
+   * even if the element is covered. Falls back to el.click().
+   */
+  force?:   boolean;
+}
+
+// ─── HumanClient ─────────────────────────────────────────────────────────────
+
+export class HumanClient {
+  constructor(private client: PiggyClient) {}
+
+  /**
+   * Update the global human-behavior profile.
+   * Only the fields you pass are changed.
+   */
+  set(opts: HumanSetOptions, tabId = "default"): Promise<void> {
+    return this.client.send("human.set", { ...opts, tabId });
+  }
+
+  /**
+   * Type text into a selector character-by-character with realistic delays.
+   * Respects the current profile typingSpeed unless `speed` is overridden.
+   */
+  type(opts: HumanTypeOptions, tabId = "default"): Promise<void> {
+    return this.client.send("human.type", { ...opts, tabId });
+  }
+
+  /**
+   * Click a selector with a human-like delay before the click.
+   * Set force:true to bypass visibility/coverage checks.
+   */
+  click(opts: HumanClickOptions, tabId = "default"): Promise<void> {
+    return this.client.send("human.click", { ...opts, tabId });
+  }
+
+  /**
+   * Return the current global HumanProfile settings.
+   */
+  get(tabId = "default"): Promise<HumanProfile> {
+    return this.client.send("human.get", { tabId });
+  }
+}
+
+// ─── Factory helper ───────────────────────────────────────────────────────────
+
+export function createHumanAPI(client: PiggyClient): HumanClient {
+  return new HumanClient(client);
 }
