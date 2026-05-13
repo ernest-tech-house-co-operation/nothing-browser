@@ -67,22 +67,3 @@ export function createRouter(client: PiggyClient): PiggyRouter {
   };
 }
 
-Share `piggy.ts` — that's the main entry point that needs to import and wire everything together. Once I see it I'll tell you exactly what to add/change.
-Just the missing files + rewrite the partial ones. Let's go one by one.
-
-Starting with the missing ones:Now the rewrites for partial files — fixing the mismatches:All 11 files. Quick summary of what was done:
-
-**New files (were missing entirely):**
-- `capture/index.ts` — all capture commands
-- `interactions/index.ts` — click, type, scroll, keyboard, mouse, evaluate
-- `media/index.ts` — screenshot, pdf, image blocking
-- `navigation/index.ts` — navigate, reload, back/forward, page info, wait
-- `tabs/index.ts` — tab.new, tab.close, tab.list
-- `session/index.ts` — session lifecycle, paths, cookies, export/import
-- `http/index.ts` — HTTP transport matching PiggyHttp.cpp port 2005
-- `router/index.ts` — composes all sub-clients, mirrors PiggyCommandRouter.cpp
-
-**Rewrites (were partial/broken):**
-- `human/index.ts` — added the actual `HumanClient` class with all 4 commands
-- `wait/index.ts` — added `state` param to `selector()`, fixed `FetchClient` field names (`query` vs `selector`)
-- `export/index.ts` — fixed intercept field names (`redirect` not `redirectUrl`, `setHeaders` not `headers`), fixed `session.export` JSON parse, fixed event name `exposed_call`
