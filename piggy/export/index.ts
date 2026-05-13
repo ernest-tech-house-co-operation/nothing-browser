@@ -1,19 +1,27 @@
 // piggy/export/index.ts
 import { PiggyClient } from "../client";
 
+// ─── Intercept ────────────────────────────────────────────────────────────────
+// Field names match exactly what PiggyExport.cpp reads:
+// pattern, block, redirect, setHeaders, removeHeaders
+
+export interface InterceptRule {
+  pattern: string;
+  block?: boolean;
+  redirect?: string;                    // C++ reads "redirect" not "redirectUrl"
+  setHeaders?: Record<string, string>;  // C++ reads "setHeaders"
+  removeHeaders?: string[];             // C++ reads "removeHeaders"
+}
+
 // ─── Cookie ───────────────────────────────────────────────────────────────────
 
 export interface CookieSetOptions {
   name: string;
   value: string;
   domain: string;
-  /** @default "/" */
   path?: string;
-  /** @default false */
   httpOnly?: boolean;
-  /** @default false */
   secure?: boolean;
-  /** Unix epoch seconds. Omit for a session cookie. */
   expiry?: number;
 }
 
@@ -22,7 +30,17 @@ export interface CookieDeleteOptions {
   domain: string;
 }
 
-// ─── Network capture ──────────────────────────────────────────────────────────
+// ─── Session ──────────────────────────────────────────────────────────────────
+
+export interface SessionPaths {
+  workDir: string;
+  cookies: string;
+  profile: string;
+  ws: string;
+  pings: string;
+}
+
+// ─── Capture types ────────────────────────────────────────────────────────────
 
 export interface CapturedRequest {
   method: string;
@@ -56,28 +74,6 @@ export interface SessionExport {
   cookies: CapturedCookie[];
 }
 
-// ─── Session paths ────────────────────────────────────────────────────────────
-
-export interface SessionPaths {
-  workDir: string;
-  cookies: string;
-  profile: string;
-  ws: string;
-  pings: string;
-}
-
-// ─── Intercept ────────────────────────────────────────────────────────────────
-
-export interface InterceptRule {
-  pattern: string;
-  block?: boolean;
-  redirect?: string;
-  setHeaders?: Record<string, string>;
-  removeHeaders?: string[];
-}
-
-// ─── ExposedFunction event ────────────────────────────────────────────────────
-
 export interface ExposedFunctionCall {
   name: string;
   callId: string;
@@ -90,7 +86,17 @@ export interface ExposedFunctionCall {
 export class ExportClient {
   constructor(private client: PiggyClient) {}
 
-  // ── Cookies ─────────────────────────────────────────────────────────────────
+  // ── DOM fetch ─────────────────────────────────────────────────────────────
+
+  searchCss(query: string, tabId = "default"): Promise<any> {
+    return this.client.send("search.css", { query, tabId });
+  }
+
+  searchId(query: string, tabId = "default"): Promise<any> {
+    return this.client.send("search.id", { query, tabId });
+  }
+
+  // ── Cookies ───────────────────────────────────────────────────────────────
 
   setCookie(opts: CookieSetOptions, tabId = "default"): Promise<void> {
     return this.client.send("cookie.set", { ...opts, tabId });
@@ -100,49 +106,42 @@ export class ExportClient {
     return this.client.send("cookie.delete", { ...opts, tabId });
   }
 
-  // ── Session ─────────────────────────────────────────────────────────────────
+  // ── Session ───────────────────────────────────────────────────────────────
 
-  /** Reload cookies/session from disk. */
   sessionReload(tabId = "default"): Promise<void> {
     return this.client.send("session.reload", { tabId });
   }
 
-  /** Get path of the cookies file. */
-  cookiesPath(tabId = "default"): Promise<string> {
-    return this.client.send("session.cookies.path", { tabId });
+  cookiesPath(): Promise<string> {
+    return this.client.send("session.cookies.path", {});
   }
 
-  /** Get path of the browser profile directory. */
-  profilePath(tabId = "default"): Promise<string> {
-    return this.client.send("session.profile.path", { tabId });
+  profilePath(): Promise<string> {
+    return this.client.send("session.profile.path", {});
   }
 
-  /** Get path of ws.json. */
-  wsPath(tabId = "default"): Promise<string> {
-    return this.client.send("session.ws.path", { tabId });
+  wsPath(): Promise<string> {
+    return this.client.send("session.ws.path", {});
   }
 
-  /** Get path of pings.json. */
-  pingsPath(tabId = "default"): Promise<string> {
-    return this.client.send("session.pings.path", { tabId });
+  pingsPath(): Promise<string> {
+    return this.client.send("session.pings.path", {});
   }
 
-  /** Get all data-file paths at once. */
-  sessionPaths(tabId = "default"): Promise<SessionPaths> {
-    return this.client.send("session.paths", { tabId });
+  sessionPaths(): Promise<SessionPaths> {
+    return this.client.send("session.paths", {});
   }
 
-  /** Enable / disable WebSocket frame persistence to ws.json. */
-  setWsSave(enabled: boolean, tabId = "default"): Promise<void> {
-    return this.client.send("session.ws.save", { enabled, tabId });
+  setWsSave(enabled: boolean): Promise<void> {
+    return this.client.send("session.ws.save", { enabled });
   }
 
-  /** Enable / disable ping persistence to pings.json. */
-  setPingsSave(enabled: boolean, tabId = "default"): Promise<void> {
-    return this.client.send("session.pings.save", { enabled, tabId });
+  setPingsSave(enabled: boolean): Promise<void> {
+    return this.client.send("session.pings.save", { enabled });
   }
 
-  // ── Intercept rules ─────────────────────────────────────────────────────────
+  // ── Intercept rules ───────────────────────────────────────────────────────
+  // Field names exactly match what PiggyExport.cpp reads
 
   addInterceptRule(rule: InterceptRule, tabId = "default"): Promise<void> {
     return this.client.send("intercept.rule.add", { ...rule, tabId });
@@ -152,16 +151,14 @@ export class ExportClient {
     return this.client.send("intercept.rule.clear", { tabId });
   }
 
-  // ── Session export / import ─────────────────────────────────────────────────
+  // ── Session export / import ───────────────────────────────────────────────
+  // C++ returns a JSON string from session.export so we parse it here
 
-  /** Export captured requests, WS frames, and cookies as a structured object. */
-  exportSession(tabId = "default"): Promise<SessionExport> {
-    return this.client.send("session.export", { tabId }).then((raw) =>
-      typeof raw === "string" ? JSON.parse(raw) : raw
-    );
+  async exportSession(tabId = "default"): Promise<SessionExport> {
+    const raw = await this.client.send<string>("session.export", { tabId });
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
   }
 
-  /** Import a previously exported session blob back into the tab context. */
   importSession(data: SessionExport, tabId = "default"): Promise<void> {
     return this.client.send("session.import", {
       data: JSON.stringify(data),
@@ -169,53 +166,31 @@ export class ExportClient {
     });
   }
 
-  // ── Exposed functions ───────────────────────────────────────────────────────
+  // ── Exposed functions ─────────────────────────────────────────────────────
 
-  /**
-   * Register a JS function name so the page can call it and have the result
-   * routed back to the host script via the `exposedFunction` event.
-   */
   exposeFunction(name: string, tabId = "default"): Promise<void> {
     return this.client.send("expose.function", { name, tabId });
   }
 
-  /**
-   * Resolve (or reject) a pending page-side call created by an exposed function.
-   */
-  resolveExposed(
-    callId: string,
-    result: string,
-    isError = false,
-    tabId = "default"
-  ): Promise<void> {
+  resolveExposed(callId: string, result: string, isError = false, tabId = "default"): Promise<void> {
     return this.client.send("exposed.result", { callId, result, isError, tabId });
   }
 
-  // ── Init scripts ────────────────────────────────────────────────────────────
+  // ── Init scripts ──────────────────────────────────────────────────────────
 
-  /**
-   * Inject a JS snippet that runs at DocumentCreation on every page load
-   * for this tab (persisted across navigations via QWebEngineScript).
-   */
   addInitScript(js: string, tabId = "default"): Promise<void> {
     return this.client.send("addInitScript", { js, tabId });
   }
 
-  // ── Events ──────────────────────────────────────────────────────────────────
+  // ── Events ────────────────────────────────────────────────────────────────
 
-  /**
-   * Subscribe to calls made by a page-exposed function.
-   * Returns an unsubscribe function.
-   */
   onExposedFunctionCalled(
     tabId: string,
     handler: (call: ExposedFunctionCall) => void
   ): () => void {
-    return this.client.onEvent("exposedFunction", tabId, handler);
+    return this.client.onEvent("exposed_call", tabId, handler);
   }
 }
-
-// ── Factory helper ────────────────────────────────────────────────────────────
 
 export function createExportAPI(client: PiggyClient): ExportClient {
   return new ExportClient(client);
