@@ -6805,6 +6805,26 @@ var require_lib = __commonJS((exports, module) => {
   module.exports.SqliteError = require_sqlite_error();
 });
 
+// piggy/human/index.ts
+class HumanClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  set(opts, tabId = "default") {
+    return this.client.send("human.set", { ...opts, tabId });
+  }
+  get(tabId = "default") {
+    return this.client.send("human.get", { tabId });
+  }
+  type(opts, tabId = "default") {
+    return this.client.send("human.type", { ...opts, tabId });
+  }
+  click(opts, tabId = "default") {
+    return this.client.send("human.click", { ...opts, tabId });
+  }
+}
+
 // piggy/logger/index.ts
 var import_ernest_logger = __toESM(require_ernest_logger(), 1);
 var logger = import_ernest_logger.createLogger({
@@ -22570,61 +22590,6 @@ var store = new Map;
 var routeRegistry = new Map;
 var keepAliveSites = new Set;
 
-// piggy/human/index.ts
-function randomDelay(min, max) {
-  return new Promise((r) => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min));
-}
-function humanTypeSequence(text) {
-  const adjacent = {
-    a: ["q", "w", "s", "z"],
-    b: ["v", "g", "h", "n"],
-    c: ["x", "d", "f", "v"],
-    d: ["s", "e", "r", "f", "c", "x"],
-    e: ["w", "r", "d", "s"],
-    f: ["d", "r", "t", "g", "v", "c"],
-    g: ["f", "t", "y", "h", "b", "v"],
-    h: ["g", "y", "u", "j", "n", "b"],
-    i: ["u", "o", "k", "j"],
-    j: ["h", "u", "i", "k", "m", "n"],
-    k: ["j", "i", "o", "l", "m"],
-    l: ["k", "o", "p"],
-    m: ["n", "j", "k"],
-    n: ["b", "h", "j", "m"],
-    o: ["i", "p", "l", "k"],
-    p: ["o", "l"],
-    q: ["w", "a"],
-    r: ["e", "t", "f", "d"],
-    s: ["a", "w", "e", "d", "x", "z"],
-    t: ["r", "y", "g", "f"],
-    u: ["y", "i", "h", "j"],
-    v: ["c", "f", "g", "b"],
-    w: ["q", "e", "a", "s"],
-    x: ["z", "s", "d", "c"],
-    y: ["t", "u", "g", "h"],
-    z: ["a", "s", "x"]
-  };
-  const actions = [];
-  const typoIndices = new Set;
-  if (text.length > 4) {
-    let tries = 0;
-    while (typoIndices.size < 2 && tries < 20) {
-      typoIndices.add(Math.floor(Math.random() * text.length));
-      tries++;
-    }
-  }
-  for (let i = 0;i < text.length; i++) {
-    if (typoIndices.has(i)) {
-      const ch = text[i].toLowerCase();
-      const neighbors = adjacent[ch];
-      const typo = neighbors ? neighbors[Math.floor(Math.random() * neighbors.length)] ?? ch : ch;
-      actions.push(typo);
-      actions.push("BACKSPACE");
-    }
-    actions.push(text[i]);
-  }
-  return actions;
-}
-
 // piggy/intercept/scripts.ts
 function buildRespondScript(pattern, status2, contentType, body) {
   const safePattern = pattern.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
@@ -23035,7 +23000,7 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
     },
     click: (selector, opts) => withErrScreen(() => withTab((t2) => retry(name, async () => {
       if (humanMode)
-        await randomDelay(80, 220);
+        await new Promise((r) => setTimeout(r, 80 + Math.random() * 140));
       await client.waitForSelector(selector, opts?.timeout ?? 15000, t2);
       const ok = await client.click(selector, t2);
       if (!ok)
@@ -23045,48 +23010,36 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
     }, opts?.retries ?? 2)), `click(${selector})`),
     doubleClick: (selector) => withErrScreen(() => withTab(async (t2) => {
       if (humanMode)
-        await randomDelay(80, 200);
+        await new Promise((r) => setTimeout(r, 80 + Math.random() * 120));
       return client.doubleClick(selector, t2);
     }), `dblclick(${selector})`),
     hover: (selector) => withErrScreen(() => withTab(async (t2) => {
       if (humanMode)
-        await randomDelay(50, 150);
+        await new Promise((r) => setTimeout(r, 50 + Math.random() * 100));
       return client.hover(selector, t2);
     }), `hover(${selector})`),
     type: (selector, text, opts) => withErrScreen(() => withTab(async (t2) => {
       await client.waitForSelector(selector, 30000, t2);
-      if (humanMode && !opts?.fact) {
-        const seq = humanTypeSequence(text);
-        let current = "";
-        for (const action of seq) {
-          if (action === "BACKSPACE")
-            current = current.slice(0, -1);
-          else
-            current += action;
-          await client.evaluate(`
-            (function() {
-              const el = document.querySelector('${selector}');
-              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-              nativeSetter.call(el, '${current.replace(/'/g, "\\'")}');
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-              el.dispatchEvent(new Event('change', { bubbles: true }));
-            })()
-          `, t2);
-          const wpm = opts?.wpm ?? 120;
-          const msPerChar = Math.round(60000 / (wpm * 5));
-          await randomDelay(msPerChar * 0.5, msPerChar * 1.8);
-        }
-      } else if (opts?.delay) {
-        for (const ch of text) {
-          await client.type(selector, ch, t2);
-          await new Promise((r) => setTimeout(r, opts.delay));
-        }
+      if (humanMode) {
+        const human = new HumanClient(client);
+        await human.type({
+          selector,
+          text,
+          clear: opts?.clear ?? false,
+          speed: opts?.speed
+        }, t2);
       } else {
+        if (opts?.clear) {
+          await client.evaluate(`
+                const el = document.querySelector('${selector.replace(/'/g, "\\'")}');
+                if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
+              `, t2);
+        }
         await client.type(selector, text, t2);
       }
       await client.evaluate(`
-        document.querySelector('${selector}').dispatchEvent(new Event('blur', { bubbles: true }))
-      `, t2);
+            document.querySelector('${selector.replace(/'/g, "\\'")}')?.dispatchEvent(new Event('blur', { bubbles: true }));
+          `, t2);
       logger_default.success(`[${name}] typed into: ${selector}`);
       return true;
     }), `type(${selector})`),
@@ -23111,7 +23064,7 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
           const chunk = px / steps;
           for (let i = 0;i < steps; i++) {
             await client.scrollBy(chunk, t2);
-            await randomDelay(30, 80);
+            await new Promise((r) => setTimeout(r, 30 + Math.random() * 50));
           }
         } else {
           await client.scrollBy(px, t2);

@@ -7568,6 +7568,29 @@ class PiggyClient {
   }
 }
 
+// piggy/human/index.ts
+class HumanClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  set(opts, tabId = "default") {
+    return this.client.send("human.set", { ...opts, tabId });
+  }
+  get(tabId = "default") {
+    return this.client.send("human.get", { tabId });
+  }
+  type(opts, tabId = "default") {
+    return this.client.send("human.type", { ...opts, tabId });
+  }
+  click(opts, tabId = "default") {
+    return this.client.send("human.click", { ...opts, tabId });
+  }
+}
+function createHumanAPI(client) {
+  return new HumanClient(client);
+}
+
 // node_modules/memoirist/dist/index.mjs
 var createNode = (part, inert) => {
   const inertMap = inert?.length ? {} : null;
@@ -28297,61 +28320,6 @@ function stopServer() {
   _app = null;
 }
 
-// piggy/human/index.ts
-function randomDelay(min, max) {
-  return new Promise((r) => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min));
-}
-function humanTypeSequence(text) {
-  const adjacent = {
-    a: ["q", "w", "s", "z"],
-    b: ["v", "g", "h", "n"],
-    c: ["x", "d", "f", "v"],
-    d: ["s", "e", "r", "f", "c", "x"],
-    e: ["w", "r", "d", "s"],
-    f: ["d", "r", "t", "g", "v", "c"],
-    g: ["f", "t", "y", "h", "b", "v"],
-    h: ["g", "y", "u", "j", "n", "b"],
-    i: ["u", "o", "k", "j"],
-    j: ["h", "u", "i", "k", "m", "n"],
-    k: ["j", "i", "o", "l", "m"],
-    l: ["k", "o", "p"],
-    m: ["n", "j", "k"],
-    n: ["b", "h", "j", "m"],
-    o: ["i", "p", "l", "k"],
-    p: ["o", "l"],
-    q: ["w", "a"],
-    r: ["e", "t", "f", "d"],
-    s: ["a", "w", "e", "d", "x", "z"],
-    t: ["r", "y", "g", "f"],
-    u: ["y", "i", "h", "j"],
-    v: ["c", "f", "g", "b"],
-    w: ["q", "e", "a", "s"],
-    x: ["z", "s", "d", "c"],
-    y: ["t", "u", "g", "h"],
-    z: ["a", "s", "x"]
-  };
-  const actions = [];
-  const typoIndices = new Set;
-  if (text.length > 4) {
-    let tries = 0;
-    while (typoIndices.size < 2 && tries < 20) {
-      typoIndices.add(Math.floor(Math.random() * text.length));
-      tries++;
-    }
-  }
-  for (let i = 0;i < text.length; i++) {
-    if (typoIndices.has(i)) {
-      const ch = text[i].toLowerCase();
-      const neighbors = adjacent[ch];
-      const typo = neighbors ? neighbors[Math.floor(Math.random() * neighbors.length)] ?? ch : ch;
-      actions.push(typo);
-      actions.push("BACKSPACE");
-    }
-    actions.push(text[i]);
-  }
-  return actions;
-}
-
 // piggy/intercept/scripts.ts
 function buildRespondScript(pattern, status2, contentType, body) {
   const safePattern = pattern.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
@@ -28762,7 +28730,7 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
     },
     click: (selector, opts) => withErrScreen(() => withTab((t2) => retry(name, async () => {
       if (humanMode)
-        await randomDelay(80, 220);
+        await new Promise((r) => setTimeout(r, 80 + Math.random() * 140));
       await client.waitForSelector(selector, opts?.timeout ?? 15000, t2);
       const ok = await client.click(selector, t2);
       if (!ok)
@@ -28772,48 +28740,36 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
     }, opts?.retries ?? 2)), `click(${selector})`),
     doubleClick: (selector) => withErrScreen(() => withTab(async (t2) => {
       if (humanMode)
-        await randomDelay(80, 200);
+        await new Promise((r) => setTimeout(r, 80 + Math.random() * 120));
       return client.doubleClick(selector, t2);
     }), `dblclick(${selector})`),
     hover: (selector) => withErrScreen(() => withTab(async (t2) => {
       if (humanMode)
-        await randomDelay(50, 150);
+        await new Promise((r) => setTimeout(r, 50 + Math.random() * 100));
       return client.hover(selector, t2);
     }), `hover(${selector})`),
     type: (selector, text, opts) => withErrScreen(() => withTab(async (t2) => {
       await client.waitForSelector(selector, 30000, t2);
-      if (humanMode && !opts?.fact) {
-        const seq = humanTypeSequence(text);
-        let current = "";
-        for (const action of seq) {
-          if (action === "BACKSPACE")
-            current = current.slice(0, -1);
-          else
-            current += action;
-          await client.evaluate(`
-            (function() {
-              const el = document.querySelector('${selector}');
-              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-              nativeSetter.call(el, '${current.replace(/'/g, "\\'")}');
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-              el.dispatchEvent(new Event('change', { bubbles: true }));
-            })()
-          `, t2);
-          const wpm = opts?.wpm ?? 120;
-          const msPerChar = Math.round(60000 / (wpm * 5));
-          await randomDelay(msPerChar * 0.5, msPerChar * 1.8);
-        }
-      } else if (opts?.delay) {
-        for (const ch of text) {
-          await client.type(selector, ch, t2);
-          await new Promise((r) => setTimeout(r, opts.delay));
-        }
+      if (humanMode) {
+        const human = new HumanClient(client);
+        await human.type({
+          selector,
+          text,
+          clear: opts?.clear ?? false,
+          speed: opts?.speed
+        }, t2);
       } else {
+        if (opts?.clear) {
+          await client.evaluate(`
+                const el = document.querySelector('${selector.replace(/'/g, "\\'")}');
+                if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
+              `, t2);
+        }
         await client.type(selector, text, t2);
       }
       await client.evaluate(`
-        document.querySelector('${selector}').dispatchEvent(new Event('blur', { bubbles: true }))
-      `, t2);
+            document.querySelector('${selector.replace(/'/g, "\\'")}')?.dispatchEvent(new Event('blur', { bubbles: true }));
+          `, t2);
       logger_default.success(`[${name}] typed into: ${selector}`);
       return true;
     }), `type(${selector})`),
@@ -28838,7 +28794,7 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
           const chunk = px / steps;
           for (let i = 0;i < steps; i++) {
             await client.scrollBy(chunk, t2);
-            await randomDelay(30, 80);
+            await new Promise((r) => setTimeout(r, 30 + Math.random() * 50));
           }
         } else {
           await client.scrollBy(px, t2);
@@ -29140,11 +29096,788 @@ class TabPool {
   }
 }
 
+// piggy/capture/index.ts
+class CaptureClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  start(tabId = "default") {
+    return this.client.send("capture.start", { tabId });
+  }
+  stop(tabId = "default") {
+    return this.client.send("capture.stop", { tabId });
+  }
+  requests(tabId = "default") {
+    return this.client.send("capture.requests", { tabId });
+  }
+  ws(tabId = "default") {
+    return this.client.send("capture.ws", { tabId });
+  }
+  cookies(tabId = "default") {
+    return this.client.send("capture.cookies", { tabId });
+  }
+  storage(tabId = "default") {
+    return this.client.send("capture.storage", { tabId });
+  }
+  clear(tabId = "default") {
+    return this.client.send("capture.clear", { tabId });
+  }
+}
+function createCaptureAPI(client) {
+  return new CaptureClient(client);
+}
+
+// piggy/captcha/index.ts
+class CaptchaClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  status(tabId = "default") {
+    return this.client.send("captcha.status", { tabId });
+  }
+  resolve(tabId = "default") {
+    return this.client.send("captcha.resolve", { tabId });
+  }
+  pause(tabId = "default") {
+    return this.client.send("captcha.pause", { tabId });
+  }
+  check(tabId = "default") {
+    return this.client.send("captcha.check", { tabId });
+  }
+  setAutoRetry(enabled) {
+    return this.client.send("captcha.autoRetry", { enabled });
+  }
+  blockStatus(tabId = "default") {
+    return this.client.send("block.status", { tabId });
+  }
+  blockRetry(tabId = "default") {
+    return this.client.send("block.retry", { tabId });
+  }
+  onCaptcha(tabId, handler) {
+    return this.client.onEvent("captcha", tabId, handler);
+  }
+  onCaptchaResolved(tabId, handler) {
+    return this.client.onEvent("captcha:resolved", tabId, handler);
+  }
+  onBlocked(tabId, handler) {
+    return this.client.onEvent("blocked", tabId, handler);
+  }
+  onBlockRetry(tabId, handler) {
+    return this.client.onEvent("block:retry", tabId, handler);
+  }
+  waitForResolution(tabId = "default", timeoutMs = 300000) {
+    return new Promise((resolve2, reject) => {
+      const timer = setTimeout(() => {
+        unsub();
+        reject(new Error(`captcha.waitForResolution: timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const unsub = this.onCaptchaResolved(tabId, () => {
+        clearTimeout(timer);
+        unsub();
+        resolve2();
+      });
+      logger_default.warn(`[captcha] waiting for manual resolution on tab ${tabId}…`);
+    });
+  }
+}
+function createCaptchaAPI(client) {
+  return new CaptchaClient(client);
+}
+
+// piggy/dialog/index.ts
+class DialogClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  accept(tabId = "default", text) {
+    return this.client.send("dialog.accept", { tabId, ...text !== undefined ? { text } : {} });
+  }
+  dismiss(tabId = "default") {
+    return this.client.send("dialog.dismiss", { tabId });
+  }
+  status(tabId = "default") {
+    return this.client.send("dialog.status", { tabId });
+  }
+  setAutoAction(tabId = "default", action) {
+    return this.client.send("dialog.onDialog", { tabId, action });
+  }
+  upload(selector, filePath, tabId = "default") {
+    return this.client.send("upload", { selector, path: filePath, tabId });
+  }
+  onDialog(tabId, handler) {
+    return this.client.onEvent("dialog", tabId, handler);
+  }
+  waitAndAccept(tabId = "default", text, timeoutMs = 30000) {
+    return new Promise((resolve2, reject) => {
+      const timer = setTimeout(() => {
+        unsub();
+        reject(new Error(`dialog.waitAndAccept: timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const unsub = this.onDialog(tabId, async (data) => {
+        clearTimeout(timer);
+        unsub();
+        await this.accept(tabId, text);
+        resolve2(data);
+      });
+    });
+  }
+  waitAndDismiss(tabId = "default", timeoutMs = 30000) {
+    return new Promise((resolve2, reject) => {
+      const timer = setTimeout(() => {
+        unsub();
+        reject(new Error(`dialog.waitAndDismiss: timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const unsub = this.onDialog(tabId, async (data) => {
+        clearTimeout(timer);
+        unsub();
+        await this.dismiss(tabId);
+        resolve2(data);
+      });
+    });
+  }
+}
+function createDialogAPI(client) {
+  return new DialogClient(client);
+}
+
+// piggy/export/index.ts
+class ExportClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  searchCss(query, tabId = "default") {
+    return this.client.send("search.css", { query, tabId });
+  }
+  searchId(query, tabId = "default") {
+    return this.client.send("search.id", { query, tabId });
+  }
+  setCookie(opts, tabId = "default") {
+    return this.client.send("cookie.set", { ...opts, tabId });
+  }
+  deleteCookie(opts, tabId = "default") {
+    return this.client.send("cookie.delete", { ...opts, tabId });
+  }
+  sessionReload(tabId = "default") {
+    return this.client.send("session.reload", { tabId });
+  }
+  cookiesPath() {
+    return this.client.send("session.cookies.path", {});
+  }
+  profilePath() {
+    return this.client.send("session.profile.path", {});
+  }
+  wsPath() {
+    return this.client.send("session.ws.path", {});
+  }
+  pingsPath() {
+    return this.client.send("session.pings.path", {});
+  }
+  sessionPaths() {
+    return this.client.send("session.paths", {});
+  }
+  setWsSave(enabled) {
+    return this.client.send("session.ws.save", { enabled });
+  }
+  setPingsSave(enabled) {
+    return this.client.send("session.pings.save", { enabled });
+  }
+  addInterceptRule(rule, tabId = "default") {
+    return this.client.send("intercept.rule.add", { ...rule, tabId });
+  }
+  clearInterceptRules(tabId = "default") {
+    return this.client.send("intercept.rule.clear", { tabId });
+  }
+  async exportSession(tabId = "default") {
+    const raw = await this.client.send("session.export", { tabId });
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  }
+  importSession(data, tabId = "default") {
+    return this.client.send("session.import", {
+      data: JSON.stringify(data),
+      tabId
+    });
+  }
+  exposeFunction(name, tabId = "default") {
+    return this.client.send("expose.function", { name, tabId });
+  }
+  resolveExposed(callId, result, isError = false, tabId = "default") {
+    return this.client.send("exposed.result", { callId, result, isError, tabId });
+  }
+  addInitScript(js, tabId = "default") {
+    return this.client.send("addInitScript", { js, tabId });
+  }
+  onExposedFunctionCalled(tabId, handler) {
+    return this.client.onEvent("exposed_call", tabId, handler);
+  }
+}
+function createExportAPI(client) {
+  return new ExportClient(client);
+}
+
+// piggy/find/index.ts
+class FindClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  css(selector, tabId = "default") {
+    return this.client.send("find.css", { selector, tabId });
+  }
+  all(selector, tabId = "default") {
+    return this.client.send("find.all", { selector, tabId });
+  }
+  first(selector, tabId = "default") {
+    return this.client.send("find.first", { selector, tabId });
+  }
+  byText(opts, tabId = "default") {
+    return this.client.send("find.byText", { ...opts, tabId });
+  }
+  byAttr(opts, tabId = "default") {
+    return this.client.send("find.byAttr", { ...opts, tabId });
+  }
+  byTag(tag, tabId = "default") {
+    return this.client.send("find.byTag", { tag, tabId });
+  }
+  byPlaceholder(text, tabId = "default") {
+    return this.client.send("find.byPlaceholder", { text, tabId });
+  }
+  byRole(opts, tabId = "default") {
+    return this.client.send("find.byRole", { ...opts, tabId });
+  }
+  children(selector, tabId = "default") {
+    return this.client.send("find.children", { selector, tabId });
+  }
+  filter(opts, tabId = "default") {
+    return this.client.send("find.filter", { ...opts, tabId });
+  }
+  closest(opts, tabId = "default") {
+    return this.client.send("find.closest", { ...opts, tabId });
+  }
+  parent(selector, tabId = "default") {
+    return this.client.send("find.parent", { selector, tabId });
+  }
+  count(selector, tabId = "default") {
+    return this.client.send("find.count", { selector, tabId });
+  }
+  exists(selector, tabId = "default") {
+    return this.client.send("find.exists", { selector, tabId });
+  }
+  visible(selector, tabId = "default") {
+    return this.client.send("find.visible", { selector, tabId });
+  }
+  enabled(selector, tabId = "default") {
+    return this.client.send("find.enabled", { selector, tabId });
+  }
+  checked(selector, tabId = "default") {
+    return this.client.send("find.checked", { selector, tabId });
+  }
+}
+function createFindAPI(client) {
+  return new FindClient(client);
+}
+
+// piggy/iframe/index.ts
+class IframeClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  list(tabId = "default") {
+    return this.client.send("iframe.list", { tabId });
+  }
+  evaluate(opts, tabId = "default") {
+    return this.client.send("iframe.evaluate", { ...opts, tabId });
+  }
+  click(opts, tabId = "default") {
+    return this.client.send("iframe.click", { ...opts, tabId });
+  }
+  type(opts, tabId = "default") {
+    return this.client.send("iframe.type", { ...opts, tabId });
+  }
+  text(opts, tabId = "default") {
+    return this.client.send("iframe.text", { ...opts, tabId });
+  }
+  html(opts, tabId = "default") {
+    return this.client.send("iframe.html", { ...opts, tabId });
+  }
+  waitSel(opts, tabId = "default") {
+    return this.client.send("iframe.waitSel", { ...opts, tabId });
+  }
+}
+function createIframeAPI(client) {
+  return new IframeClient(client);
+}
+
+// piggy/interactions/index.ts
+class InteractionsClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  click(selector, tabId = "default") {
+    return this.client.send("click", { selector, tabId });
+  }
+  dblclick(selector, tabId = "default") {
+    return this.client.send("dblclick", { selector, tabId });
+  }
+  hover(selector, tabId = "default") {
+    return this.client.send("hover", { selector, tabId });
+  }
+  type(selector, text, tabId = "default") {
+    return this.client.send("type", { selector, text, tabId });
+  }
+  typeClear(selector, text, tabId = "default") {
+    return this.client.send("type", { selector, text, clear: true, tabId });
+  }
+  select(selector, value, tabId = "default") {
+    return this.client.send("select", { selector, value, tabId });
+  }
+  scrollTo(selector, tabId = "default") {
+    return this.client.send("scroll.to", { selector, tabId });
+  }
+  scrollBy(px, tabId = "default") {
+    return this.client.send("scroll.by", { px, tabId });
+  }
+  keyPress(key, tabId = "default") {
+    return this.client.send("keyboard.press", { key, tabId });
+  }
+  keyCombo(combo, tabId = "default") {
+    return this.client.send("keyboard.combo", { combo, tabId });
+  }
+  mouseMove(x, y, tabId = "default") {
+    return this.client.send("mouse.move", { x, y, tabId });
+  }
+  mouseDrag(from, to, tabId = "default") {
+    return this.client.send("mouse.drag", { from, to, tabId });
+  }
+  evaluate(js, tabId = "default") {
+    return this.client.send("evaluate", { js, tabId });
+  }
+}
+function createInteractionsAPI(client) {
+  return new InteractionsClient(client);
+}
+
+// piggy/media/index.ts
+import { writeFileSync as writeFileSync3, mkdirSync as mkdirSync3 } from "fs";
+import { dirname as dirname3 } from "path";
+
+class MediaClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  async screenshot(filePath, tabId = "default") {
+    const b64 = await this.client.send("screenshot", { tabId });
+    if (filePath) {
+      mkdirSync3(dirname3(filePath), { recursive: true });
+      writeFileSync3(filePath, Buffer.from(b64, "base64"));
+      return filePath;
+    }
+    return b64;
+  }
+  async pdf(filePath, tabId = "default") {
+    const b64 = await this.client.send("pdf", { tabId });
+    if (filePath) {
+      mkdirSync3(dirname3(filePath), { recursive: true });
+      writeFileSync3(filePath, Buffer.from(b64, "base64"));
+      return filePath;
+    }
+    return b64;
+  }
+  blockImages(tabId = "default") {
+    return this.client.send("intercept.block.images", { tabId });
+  }
+  unblockImages(tabId = "default") {
+    return this.client.send("intercept.unblock.images", { tabId });
+  }
+}
+function createMediaAPI(client) {
+  return new MediaClient(client);
+}
+
+// piggy/navigation/index.ts
+class NavigationClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  navigate(url2, tabId = "default") {
+    return this.client.send("navigate", { url: url2, tabId });
+  }
+  reload(tabId = "default") {
+    return this.client.send("reload", { tabId });
+  }
+  goBack(tabId = "default") {
+    return this.client.send("go.back", { tabId });
+  }
+  goForward(tabId = "default") {
+    return this.client.send("go.forward", { tabId });
+  }
+  url(tabId = "default") {
+    return this.client.send("page.url", { tabId });
+  }
+  title(tabId = "default") {
+    return this.client.send("page.title", { tabId });
+  }
+  content(tabId = "default") {
+    return this.client.send("page.content", { tabId });
+  }
+  waitForNavigation(tabId = "default") {
+    return this.client.send("wait.navigation", { tabId });
+  }
+  waitForSelector(selector, timeout = 1e4, tabId = "default") {
+    return this.client.send("wait.selector", { selector, timeout, tabId });
+  }
+}
+function createNavigationAPI(client) {
+  return new NavigationClient(client);
+}
+
+// piggy/provide/index.ts
+class ProvideClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  text(selector, tabId = "default") {
+    return this.client.send("provide.text", { selector, tabId });
+  }
+  textAll(selector, tabId = "default") {
+    return this.client.send("provide.textAll", { selector, tabId });
+  }
+  attr(selector, attr, tabId = "default") {
+    return this.client.send("provide.attr", { selector, attr, tabId });
+  }
+  attrAll(selector, attr, tabId = "default") {
+    return this.client.send("provide.attrAll", { selector, attr, tabId });
+  }
+  html(selector, tabId = "default") {
+    return this.client.send("provide.html", { selector, tabId });
+  }
+  table(selector, tabId = "default") {
+    return this.client.send("provide.table", { selector, tabId });
+  }
+  list(selector, itemSel, tabId = "default") {
+    return this.client.send("provide.list", { selector, itemSel, tabId });
+  }
+  links(selector, tabId = "default") {
+    return this.client.send("provide.links", { selector, tabId });
+  }
+  images(selector, tabId = "default") {
+    return this.client.send("provide.images", { selector, tabId });
+  }
+  form(selector, tabId = "default") {
+    return this.client.send("provide.form", { selector, tabId });
+  }
+  page(tabId = "default") {
+    return this.client.send("provide.page", { tabId });
+  }
+  div(selector, tabId = "default") {
+    return this.client.send("provide.div", { selector, tabId });
+  }
+  meta(tabId = "default") {
+    return this.client.send("provide.meta", { tabId });
+  }
+  select(selector, tabId = "default") {
+    return this.client.send("provide.select", { selector, tabId });
+  }
+  json(selector, tabId = "default") {
+    return this.client.send("provide.json", { selector, tabId });
+  }
+}
+function createProvideAPI(client) {
+  return new ProvideClient(client);
+}
+
+// piggy/proxy/index.ts
+class ProxyClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  load(path) {
+    return this.client.send("proxy.load", { path });
+  }
+  fetch(url2) {
+    return this.client.send("proxy.fetch", { url: url2 });
+  }
+  ovpn(path) {
+    return this.client.send("proxy.ovpn", { path });
+  }
+  set(opts) {
+    return this.client.send("proxy.set", opts);
+  }
+  test() {
+    return this.client.send("proxy.test", {});
+  }
+  testStop() {
+    return this.client.send("proxy.test.stop", {});
+  }
+  next() {
+    return this.client.send("proxy.next", {});
+  }
+  rotate() {
+    return this.client.send("proxy.rotate", {});
+  }
+  disable() {
+    return this.client.send("proxy.disable", {});
+  }
+  enable() {
+    return this.client.send("proxy.enable", {});
+  }
+  current() {
+    return this.client.send("proxy.current", {});
+  }
+  stats() {
+    return this.client.send("proxy.stats", {});
+  }
+  list(limit) {
+    return this.client.send("proxy.list", { limit });
+  }
+  rotation(mode, interval) {
+    return this.client.send("proxy.rotation", { mode, interval });
+  }
+  config(opts) {
+    return this.client.send("proxy.config", opts);
+  }
+  save(path, filter) {
+    return this.client.send("proxy.save", { path, filter });
+  }
+}
+function createProxyAPI(client) {
+  return new ProxyClient(client);
+}
+
+// piggy/session/index.ts
+class SessionClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  reload(tabId = "default") {
+    return this.client.send("session.reload", { tabId });
+  }
+  paths() {
+    return this.client.send("session.paths", {});
+  }
+  cookiesPath() {
+    return this.client.send("session.cookies.path", {});
+  }
+  profilePath() {
+    return this.client.send("session.profile.path", {});
+  }
+  wsPath() {
+    return this.client.send("session.ws.path", {});
+  }
+  pingsPath() {
+    return this.client.send("session.pings.path", {});
+  }
+  setWsSave(enabled) {
+    return this.client.send("session.ws.save", { enabled });
+  }
+  setPingsSave(enabled) {
+    return this.client.send("session.pings.save", { enabled });
+  }
+  async export(tabId = "default") {
+    const raw = await this.client.send("session.export", { tabId });
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  }
+  import(data, tabId = "default") {
+    return this.client.send("session.import", {
+      data: JSON.stringify(data),
+      tabId
+    });
+  }
+  setCookie(opts, tabId = "default") {
+    return this.client.send("cookie.set", { ...opts, tabId });
+  }
+  deleteCookie(opts, tabId = "default") {
+    return this.client.send("cookie.delete", { ...opts, tabId });
+  }
+}
+function createSessionAPI(client) {
+  return new SessionClient(client);
+}
+
+// piggy/tabs/index.ts
+class TabsClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  new() {
+    return this.client.send("tab.new", {});
+  }
+  close(tabId) {
+    return this.client.send("tab.close", { tabId });
+  }
+  list() {
+    return this.client.send("tab.list", {});
+  }
+}
+function createTabsAPI(client) {
+  return new TabsClient(client);
+}
+
+// piggy/wait/index.ts
+class WaitClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  function(js, timeout = 1e4, tabId = "default") {
+    return this.client.send("wait.function", { js, timeout, tabId });
+  }
+  selector(selector, state = "attached", timeout = 1e4, tabId = "default") {
+    return this.client.send("wait.selector", { selector, state, timeout, tabId });
+  }
+}
+
+class EvaluateClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  run(js, timeout, tabId = "default") {
+    return this.client.send("evaluate", {
+      js,
+      tabId,
+      ...timeout !== undefined ? { timeout } : {}
+    });
+  }
+}
+
+class FetchClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  text(selector, tabId = "default") {
+    return this.client.send("fetch.text", { query: selector, tabId });
+  }
+  textAll(selector, tabId = "default") {
+    return this.client.send("fetch.textAll", { selector, tabId });
+  }
+  attr(selector, attr, tabId = "default") {
+    return this.client.send("fetch.attr", { selector, attr, tabId });
+  }
+  attrAll(selector, attr, tabId = "default") {
+    return this.client.send("fetch.attrAll", { selector, attr, tabId });
+  }
+  links(selector, tabId = "default") {
+    return this.client.send("fetch.links", { query: selector, tabId });
+  }
+  linksAll(tabId = "default") {
+    return this.client.send("fetch.links.all", { tabId });
+  }
+  images(selector, tabId = "default") {
+    return this.client.send("fetch.image", { query: selector, tabId });
+  }
+}
+function createWaitAPI(client) {
+  return new WaitClient(client);
+}
+function createEvaluateAPI(client) {
+  return new EvaluateClient(client);
+}
+function createFetchAPI(client) {
+  return new FetchClient(client);
+}
+
+// piggy/router/index.ts
+function createRouter(client) {
+  return {
+    client,
+    tabs: createTabsAPI(client),
+    navigation: createNavigationAPI(client),
+    interactions: createInteractionsAPI(client),
+    media: createMediaAPI(client),
+    capture: createCaptureAPI(client),
+    find: createFindAPI(client),
+    provide: createProvideAPI(client),
+    wait: createWaitAPI(client),
+    evaluate: createEvaluateAPI(client),
+    fetch: createFetchAPI(client),
+    proxy: createProxyAPI(client),
+    captcha: createCaptchaAPI(client),
+    dialog: createDialogAPI(client),
+    human: createHumanAPI(client),
+    iframe: createIframeAPI(client),
+    session: createSessionAPI(client),
+    export: createExportAPI(client)
+  };
+}
+
+// piggy/http/index.ts
+class PiggyHttpClient {
+  baseUrl;
+  key;
+  constructor(opts) {
+    const host = opts.host ?? "localhost";
+    const port = opts.port ?? 2005;
+    this.baseUrl = `http://${host}:${port}`;
+    this.key = opts.key;
+  }
+  async ping() {
+    try {
+      const res = await fetch(this.baseUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Piggy-Key": this.key
+        },
+        body: "hello"
+      });
+      const text = await res.text();
+      return text.includes("active");
+    } catch {
+      return false;
+    }
+  }
+  async send(cmd, payload = {}) {
+    const res = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Piggy-Key": this.key
+      },
+      body: JSON.stringify({ id: String(Date.now()), cmd, payload })
+    });
+    if (res.status === 401)
+      throw new Error("Unauthorized — invalid X-Piggy-Key");
+    if (res.status === 400)
+      throw new Error("Bad request — invalid JSON");
+    if (!res.ok)
+      throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.ok)
+      throw new Error(String(data.data) ?? "command failed");
+    return data.data;
+  }
+}
+function createHttpClient(opts) {
+  return new PiggyHttpClient(opts);
+}
+
 // piggy.ts
 var _client = null;
+var _router = null;
 var _tabMode = "tab";
 var _extraProcs = [];
-var _sites = [];
+var _sites = {};
+function guardClient() {
+  if (!_client)
+    throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
+  return _client;
+}
+function buildAPIs(client) {
+  _router = createRouter(client);
+}
 var piggy = {
   launch: async (opts) => {
     _tabMode = opts?.mode ?? "tab";
@@ -29154,6 +29887,7 @@ var piggy = {
     _client = new PiggyClient;
     await _client.connect();
     setClient(_client);
+    buildAPIs(_client);
     logger_default.info(`[piggy] launched — tab mode: "${_tabMode}", binary: "${binaryMode}"`);
     return piggy;
   },
@@ -29162,27 +29896,28 @@ var piggy = {
     _client = new PiggyClient({ host: opts.host, key: opts.key });
     await _client.connect();
     setClient(_client);
+    buildAPIs(_client);
     logger_default.info(`[piggy] connected (HTTP) → ${opts.host}`);
     return piggy;
   },
+  http: (opts) => createHttpClient(opts),
   register: async (name, url2, opts) => {
     if (!url2?.trim())
       throw new Error(`No URL for site "${name}"`);
     const binaryMode = opts?.binary ?? "headless";
     const poolSize = opts?.pool ?? 0;
     if (_tabMode === "tab") {
-      if (!_client)
-        throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
+      const client = guardClient();
       if (poolSize > 1) {
-        const pool = new TabPool(_client, poolSize, url2, name);
+        const pool = new TabPool(client, poolSize, url2, name);
         await pool.init();
-        const siteObj = createSiteObject(name, url2, _client, "default", pool);
+        const siteObj = createSiteObject(name, url2, client, "default", pool);
         _sites[name] = siteObj;
         piggy[name] = siteObj;
         logger_default.success(`[${name}] registered with pool of ${poolSize} tabs`);
       } else {
-        const tabId = await _client.newTab();
-        const siteObj = createSiteObject(name, url2, _client, tabId);
+        const tabId = await client.newTab();
+        const siteObj = createSiteObject(name, url2, client, tabId);
         _sites[name] = siteObj;
         piggy[name] = siteObj;
         logger_default.success(`[${name}] registered as tab ${tabId}`);
@@ -29201,6 +29936,76 @@ var piggy = {
     }
     return piggy;
   },
+  get tabs() {
+    return _router?.tabs ?? createTabsAPI(guardClient());
+  },
+  get navigation() {
+    return _router?.navigation ?? createNavigationAPI(guardClient());
+  },
+  get interactions() {
+    return _router?.interactions ?? createInteractionsAPI(guardClient());
+  },
+  get media() {
+    return _router?.media ?? createMediaAPI(guardClient());
+  },
+  get capture() {
+    return _router?.capture ?? createCaptureAPI(guardClient());
+  },
+  get find() {
+    return _router?.find ?? createFindAPI(guardClient());
+  },
+  get provide() {
+    return _router?.provide ?? createProvideAPI(guardClient());
+  },
+  get wait() {
+    return _router?.wait ?? createWaitAPI(guardClient());
+  },
+  get evaluate() {
+    return _router?.evaluate ?? createEvaluateAPI(guardClient());
+  },
+  get fetch() {
+    return _router?.fetch ?? createFetchAPI(guardClient());
+  },
+  get captcha() {
+    return _router?.captcha ?? createCaptchaAPI(guardClient());
+  },
+  get dialog() {
+    return _router?.dialog ?? createDialogAPI(guardClient());
+  },
+  get human() {
+    return _router?.human ?? createHumanAPI(guardClient());
+  },
+  get iframe() {
+    return _router?.iframe ?? createIframeAPI(guardClient());
+  },
+  get session() {
+    return _router?.session ?? createSessionAPI(guardClient());
+  },
+  get export() {
+    return _router?.export ?? createExportAPI(guardClient());
+  },
+  get proxy() {
+    const api = _router?.proxy ?? createProxyAPI(guardClient());
+    return {
+      load: (path) => api.load(path),
+      fetch: (url2) => api.fetch(url2),
+      ovpn: (path) => api.ovpn(path),
+      set: (opts) => api.set(opts),
+      test: () => api.test(),
+      testStop: () => api.testStop(),
+      next: () => api.next(),
+      rotate: () => api.rotate(),
+      disable: () => api.disable(),
+      enable: () => api.enable(),
+      current: () => api.current(),
+      stats: () => api.stats(),
+      list: (limit) => api.list(limit),
+      rotation: (mode, interval) => api.rotation(mode, interval),
+      config: (opts) => api.config(opts),
+      save: (path, filter) => api.save(path, filter),
+      on: (event, handler) => guardClient().onProxyEvent(event, handler)
+    };
+  },
   actHuman: (enable) => {
     setHumanMode(enable);
     logger_default.info(`[piggy] actHuman: ${enable}`);
@@ -29211,100 +30016,14 @@ var piggy = {
     return piggy;
   },
   expose: async (name, handler, tabId = "default") => {
-    if (!_client)
-      throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
-    await _client.exposeFunction(name, handler, tabId);
+    await guardClient().exposeFunction(name, handler, tabId);
     logger_default.success(`[piggy] exposed global function: ${name}`);
     return piggy;
   },
   unexpose: async (name, tabId = "default") => {
-    if (!_client)
-      throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
-    await _client.unexposeFunction(name, tabId);
+    await guardClient().unexposeFunction(name, tabId);
     logger_default.info(`[piggy] unexposed function: ${name}`);
     return piggy;
-  },
-  proxy: {
-    load: (path) => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyLoad(path);
-    },
-    fetch: (url2) => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyFetch(url2);
-    },
-    ovpn: (path) => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyOvpn(path);
-    },
-    set: (opts) => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxySet(opts);
-    },
-    test: () => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyTest();
-    },
-    testStop: () => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyTestStop();
-    },
-    next: () => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyNext();
-    },
-    disable: () => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyDisable();
-    },
-    enable: () => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyEnable();
-    },
-    current: () => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyCurrent();
-    },
-    stats: () => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyStats();
-    },
-    list: (limit) => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyList(limit);
-    },
-    rotation: (mode, interval) => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyRotation(mode, interval);
-    },
-    config: (opts) => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxyConfig(opts);
-    },
-    save: (path, filter) => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.proxySave(path, filter);
-    },
-    on: (event, handler) => {
-      if (!_client)
-        throw new Error("No client");
-      return _client.onProxyEvent(event, handler);
-    }
   },
   serve: (port, opts) => startServer(port, opts?.hostname, opts),
   stopServer,
@@ -29347,6 +30066,7 @@ var piggy = {
         _extraProcs.length = 0;
         _client?.disconnect();
         _client = null;
+        _router = null;
         setClient(null);
         killBrowser();
       }

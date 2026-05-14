@@ -52,7 +52,31 @@ function humanTypeSequence(text) {
   }
   return actions;
 }
+
+class HumanClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  set(opts, tabId = "default") {
+    return this.client.send("human.set", { ...opts, tabId });
+  }
+  get(tabId = "default") {
+    return this.client.send("human.get", { tabId });
+  }
+  type(opts, tabId = "default") {
+    return this.client.send("human.type", { ...opts, tabId });
+  }
+  click(opts, tabId = "default") {
+    return this.client.send("human.click", { ...opts, tabId });
+  }
+}
+function createHumanAPI(client) {
+  return new HumanClient(client);
+}
 export {
   randomDelay,
-  humanTypeSequence
+  humanTypeSequence,
+  createHumanAPI,
+  HumanClient
 };
