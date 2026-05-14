@@ -5,17 +5,49 @@ import { PiggyClient } from "./piggy/client";
 import { setClient, setHumanMode, createSiteObject, type SiteObject } from "./piggy/register";
 import { routeRegistry, keepAliveSites, startServer, stopServer } from "./piggy/server";
 import { TabPool } from "./piggy/pool";
+import { createRouter, type PiggyRouter } from "./piggy/router";
+import { createCaptureAPI } from "./piggy/capture";
+import { createCaptchaAPI } from "./piggy/captcha";
+import { createDialogAPI } from "./piggy/dialog";
+import { createExportAPI } from "./piggy/export";
+import { createFindAPI } from "./piggy/find";
+import { createHumanAPI } from "./piggy/human";
+import { createIframeAPI } from "./piggy/iframe";
+import { createInteractionsAPI } from "./piggy/interactions";
+import { createMediaAPI } from "./piggy/media";
+import { createNavigationAPI } from "./piggy/navigation";
+import { createProvideAPI } from "./piggy/provide";
+import { createProxyAPI } from "./piggy/proxy";
+import { createSessionAPI } from "./piggy/session";
+import { createTabsAPI } from "./piggy/tabs";
+import { createWaitAPI, createEvaluateAPI, createFetchAPI } from "./piggy/wait";
+import { createHttpClient, type HttpClientOptions } from "./piggy/http";
 import logger from "./piggy/logger";
 
 type TabMode = "tab" | "process";
 
 let _client: PiggyClient | null = null;
+let _router: PiggyRouter | null = null;
 let _tabMode: TabMode = "tab";
 const _extraProcs: { socket: string; client: PiggyClient }[] = [];
-const _sites: Record<string, SiteObject> = [];
+const _sites: Record<string, SiteObject> = {};
+
+// ── Internal guard ────────────────────────────────────────────────────────────
+
+function guardClient(): PiggyClient {
+  if (!_client) throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
+  return _client;
+}
+
+// ── Build sub-APIs from a client ──────────────────────────────────────────────
+
+function buildAPIs(client: PiggyClient) {
+  _router = createRouter(client);
+}
 
 const piggy: any = {
-  // ── Local launch (socket) ─────────────────────────────────────────────────
+
+  // ── Local launch (unix socket) ────────────────────────────────────────────
   launch: async (opts?: { mode?: TabMode; binary?: BinaryMode }) => {
     _tabMode = opts?.mode ?? "tab";
     const binaryMode: BinaryMode = opts?.binary ?? "headless";
@@ -24,6 +56,7 @@ const piggy: any = {
     _client = new PiggyClient();
     await _client.connect();
     setClient(_client);
+    buildAPIs(_client);
     logger.info(`[piggy] launched — tab mode: "${_tabMode}", binary: "${binaryMode}"`);
     return piggy;
   },
@@ -34,36 +67,38 @@ const piggy: any = {
     _client = new PiggyClient({ host: opts.host, key: opts.key });
     await _client.connect();
     setClient(_client);
+    buildAPIs(_client);
     logger.info(`[piggy] connected (HTTP) → ${opts.host}`);
     return piggy;
   },
+
+  // ── HTTP client (port 2005 direct) ────────────────────────────────────────
+  // Use when you want to talk to the browser over HTTP without a socket client.
+  http: (opts: HttpClientOptions) => createHttpClient(opts),
 
   // ── Register ──────────────────────────────────────────────────────────────
   register: async (
     name: string,
     url: string,
-    opts?: {
-      binary?: BinaryMode;
-      pool?: number;
-    }
+    opts?: { binary?: BinaryMode; pool?: number }
   ) => {
     if (!url?.trim()) throw new Error(`No URL for site "${name}"`);
     const binaryMode: BinaryMode = opts?.binary ?? "headless";
     const poolSize = opts?.pool ?? 0;
 
     if (_tabMode === "tab") {
-      if (!_client) throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
+      const client = guardClient();
 
       if (poolSize > 1) {
-        const pool = new TabPool(_client, poolSize, url, name);
+        const pool = new TabPool(client, poolSize, url, name);
         await pool.init();
-        const siteObj = createSiteObject(name, url, _client, "default", pool);
+        const siteObj = createSiteObject(name, url, client, "default", pool);
         _sites[name] = siteObj;
         piggy[name] = siteObj;
         logger.success(`[${name}] registered with pool of ${poolSize} tabs`);
       } else {
-        const tabId = await _client.newTab();
-        const siteObj = createSiteObject(name, url, _client, tabId);
+        const tabId = await client.newTab();
+        const siteObj = createSiteObject(name, url, client, tabId);
         _sites[name] = siteObj;
         piggy[name] = siteObj;
         logger.success(`[${name}] registered as tab ${tabId}`);
@@ -84,6 +119,49 @@ const piggy: any = {
     return piggy;
   },
 
+  // ── Sub-APIs (1:1 with C++ files, available after launch/connect) ─────────
+
+  get tabs()         { return _router?.tabs         ?? createTabsAPI(guardClient()); },
+  get navigation()   { return _router?.navigation   ?? createNavigationAPI(guardClient()); },
+  get interactions() { return _router?.interactions ?? createInteractionsAPI(guardClient()); },
+  get media()        { return _router?.media        ?? createMediaAPI(guardClient()); },
+  get capture()      { return _router?.capture      ?? createCaptureAPI(guardClient()); },
+  get find()         { return _router?.find         ?? createFindAPI(guardClient()); },
+  get provide()      { return _router?.provide      ?? createProvideAPI(guardClient()); },
+  get wait()         { return _router?.wait         ?? createWaitAPI(guardClient()); },
+  get evaluate()     { return _router?.evaluate     ?? createEvaluateAPI(guardClient()); },
+  get fetch()        { return _router?.fetch        ?? createFetchAPI(guardClient()); },
+  get captcha()      { return _router?.captcha      ?? createCaptchaAPI(guardClient()); },
+  get dialog()       { return _router?.dialog       ?? createDialogAPI(guardClient()); },
+  get human()        { return _router?.human        ?? createHumanAPI(guardClient()); },
+  get iframe()       { return _router?.iframe       ?? createIframeAPI(guardClient()); },
+  get session()      { return _router?.session      ?? createSessionAPI(guardClient()); },
+  get export()       { return _router?.export       ?? createExportAPI(guardClient()); },
+
+  // ── Proxy (global, not per-tab) ───────────────────────────────────────────
+  get proxy() {
+    const api = _router?.proxy ?? createProxyAPI(guardClient());
+    return {
+      load:     (path: string)                                              => api.load(path),
+      fetch:    (url: string)                                               => api.fetch(url),
+      ovpn:     (path: string)                                              => api.ovpn(path),
+      set:      (opts: Parameters<typeof api.set>[0])                       => api.set(opts),
+      test:     ()                                                          => api.test(),
+      testStop: ()                                                          => api.testStop(),
+      next:     ()                                                          => api.next(),
+      rotate:   ()                                                          => api.rotate(),
+      disable:  ()                                                          => api.disable(),
+      enable:   ()                                                          => api.enable(),
+      current:  ()                                                          => api.current(),
+      stats:    ()                                                          => api.stats(),
+      list:     (limit?: number)                                            => api.list(limit),
+      rotation: (mode: "none" | "timed" | "perrequest", interval?: number) => api.rotation(mode, interval),
+      config:   (opts: { skipDead?: boolean; autoCheck?: boolean })         => api.config(opts),
+      save:     (path: string, filter?: "alive" | "dead" | "all")          => api.save(path, filter),
+      on:       (event: string, handler: (data: any) => void)              => guardClient().onProxyEvent(event, handler),
+    };
+  },
+
   // ── Global controls ───────────────────────────────────────────────────────
   actHuman: (enable: boolean) => {
     setHumanMode(enable);
@@ -93,39 +171,17 @@ const piggy: any = {
 
   mode: (m: TabMode) => { _tabMode = m; return piggy; },
 
-  // ── Expose Function ───────────────────────────────────────────────────────
+  // ── Global expose ─────────────────────────────────────────────────────────
   expose: async (name: string, handler: (data: any) => Promise<any> | any, tabId = "default") => {
-    if (!_client) throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
-    await _client.exposeFunction(name, handler, tabId);
+    await guardClient().exposeFunction(name, handler, tabId);
     logger.success(`[piggy] exposed global function: ${name}`);
     return piggy;
   },
 
   unexpose: async (name: string, tabId = "default") => {
-    if (!_client) throw new Error("No client. Call piggy.launch() or piggy.connect() first.");
-    await _client.unexposeFunction(name, tabId);
+    await guardClient().unexposeFunction(name, tabId);
     logger.info(`[piggy] unexposed function: ${name}`);
     return piggy;
-  },
-
-  // ── Proxy ─────────────────────────────────────────────────────────────────
-  proxy: {
-    load:     (path: string)                                               => { if (!_client) throw new Error("No client"); return _client.proxyLoad(path); },
-    fetch:    (url: string)                                                => { if (!_client) throw new Error("No client"); return _client.proxyFetch(url); },
-    ovpn:     (path: string)                                               => { if (!_client) throw new Error("No client"); return _client.proxyOvpn(path); },
-    set:      (opts: Parameters<PiggyClient["proxySet"]>[0])               => { if (!_client) throw new Error("No client"); return _client.proxySet(opts); },
-    test:     ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyTest(); },
-    testStop: ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyTestStop(); },
-    next:     ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyNext(); },
-    disable:  ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyDisable(); },
-    enable:   ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyEnable(); },
-    current:  ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyCurrent(); },
-    stats:    ()                                                           => { if (!_client) throw new Error("No client"); return _client.proxyStats(); },
-    list:     (limit?: number)                                             => { if (!_client) throw new Error("No client"); return _client.proxyList(limit); },
-    rotation: (mode: "none" | "timed" | "perrequest", interval?: number)  => { if (!_client) throw new Error("No client"); return _client.proxyRotation(mode, interval); },
-    config:   (opts: { skipDead?: boolean; autoCheck?: boolean })          => { if (!_client) throw new Error("No client"); return _client.proxyConfig(opts); },
-    save:     (path: string, filter?: "alive" | "dead" | "all")           => { if (!_client) throw new Error("No client"); return _client.proxySave(path, filter); },
-    on:       (event: string, handler: (data: any) => void)               => { if (!_client) throw new Error("No client"); return _client.onProxyEvent(event, handler); },
   },
 
   // ── Elysia server ─────────────────────────────────────────────────────────
@@ -155,7 +211,7 @@ const piggy: any = {
       };
     }),
 
-  // ── Multi-site ────────────────────────────────────────────────────────────
+  // ── Multi-site helpers ────────────────────────────────────────────────────
   all: (sites: SiteObject[]) =>
     new Proxy({} as any, {
       get: (_, method: string) =>
@@ -189,6 +245,7 @@ const piggy: any = {
         _extraProcs.length = 0;
         _client?.disconnect();
         _client = null;
+        _router = null;
         setClient(null);
         killBrowser();
       }
@@ -201,8 +258,6 @@ const piggy: any = {
 };
 
 // ── usePiggy ──────────────────────────────────────────────────────────────────
-// Typed accessor — call AFTER register() so sites exist on piggy.
-// const { amazon, ebay } = usePiggy<"amazon" | "ebay">()
 
 type TypedPiggy<Sites extends string> = typeof piggy & {
   [K in Sites]: SiteObject;
@@ -214,4 +269,4 @@ export function usePiggy<Sites extends string>(): TypedPiggy<Sites> {
 
 export type { SiteObject };
 export default piggy;
-export { piggy };  
+export { piggy };

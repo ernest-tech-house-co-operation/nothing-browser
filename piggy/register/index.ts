@@ -1,8 +1,8 @@
 // piggy/register/index.ts
 import { PiggyClient } from "../client";
+import { HumanClient } from "../human";
 import logger from "../logger";
 import { routeRegistry, keepAliveSites, type RouteHandler, type BeforeMiddleware, type RouteDetail } from "../server";
-import { randomDelay, humanTypeSequence } from "../human";
 import { buildRespondScript, buildModifyResponseScript } from "../intercept/scripts";
 import { storeRecord } from "../store";
 import { TabPool } from "../pool";
@@ -37,8 +37,6 @@ export function createSiteObject(
   let _currentUrl: string = registeredUrl;
   let _modifyRuleCounter = 0;
 
-  // ── helpers ────────────────────────────────────────────────────────────────
-  // If pool exists, run fn with a pool tab. Otherwise use the fixed tabId.
   function withTab<T>(fn: (t: string) => Promise<T>): Promise<T> {
     return pool ? pool.withTab(fn) : fn(tabId);
   }
@@ -69,10 +67,8 @@ export function createSiteObject(
     _tabId: tabId,
     _pool: pool ?? null,
 
-    // ── Pool stats ────────────────────────────────────────────────────────────
     poolStats: () => pool?.stats ?? null,
 
-    // ── Navigation ────────────────────────────────────────────────────────────
     navigate: (url?: string, opts?: { retries?: number }) => {
       const target = url ?? registeredUrl;
       return withTab(t =>
@@ -115,7 +111,6 @@ export function createSiteObject(
     waitForResponse: (pattern: string, timeout = 30000) =>
       withTab(t => client.waitForResponse(pattern, timeout, t)),
 
-    // ── Init Script ───────────────────────────────────────────────────────────
     addInitScript: async (js: string | (() => void)) => {
       const code = typeof js === "function" ? `(${js.toString()})();` : js;
       await withTab(t => client.addInitScript(code, t));
@@ -123,7 +118,6 @@ export function createSiteObject(
       return site;
     },
 
-    // ── Events ────────────────────────────────────────────────────────────────
     on: (event: string, handler: (data: any) => void): (() => void) => {
       if (!_eventListeners.has(event)) _eventListeners.set(event, new Set());
       _eventListeners.get(event)!.add(handler);
@@ -138,12 +132,11 @@ export function createSiteObject(
       _eventListeners.get(event)?.delete(handler);
     },
 
-    // ── Interactions ──────────────────────────────────────────────────────────
     click: (selector: string, opts?: { retries?: number; timeout?: number }) =>
       withErrScreen(() =>
         withTab(t =>
           retry(name, async () => {
-            if (humanMode) await randomDelay(80, 220);
+            if (humanMode) await new Promise(r => setTimeout(r, 80 + Math.random() * 140));
             await client.waitForSelector(selector, opts?.timeout ?? 15000, t);
             const ok = await client.click(selector, t);
             if (!ok) throw new Error(`click failed: ${selector}`);
@@ -157,7 +150,7 @@ export function createSiteObject(
     doubleClick: (selector: string) =>
       withErrScreen(() =>
         withTab(async t => {
-          if (humanMode) await randomDelay(80, 200);
+          if (humanMode) await new Promise(r => setTimeout(r, 80 + Math.random() * 120));
           return client.doubleClick(selector, t);
         }),
         `dblclick(${selector})`
@@ -166,52 +159,50 @@ export function createSiteObject(
     hover: (selector: string) =>
       withErrScreen(() =>
         withTab(async t => {
-          if (humanMode) await randomDelay(50, 150);
+          if (humanMode) await new Promise(r => setTimeout(r, 50 + Math.random() * 100));
           return client.hover(selector, t);
         }),
         `hover(${selector})`
       ),
 
-      type: (selector: string, text: string, opts?: { delay?: number; retries?: number; fact?: boolean; wpm?: number }) =>
-  withErrScreen(() =>
-    withTab(async t => {
-      await client.waitForSelector(selector, 30000, t);
-      if (humanMode && !opts?.fact) {
-        const seq = humanTypeSequence(text);
-        let current = "";
-        for (const action of seq) {
-          if (action === "BACKSPACE") current = current.slice(0, -1);
-          else current += action;
+    // ──────────────────────────────────────────────────────────────────────────
+    // type – uses HumanClient when humanMode is true, otherwise basic client.type
+    // ──────────────────────────────────────────────────────────────────────────
+    type: (selector: string, text: string, opts?: { delay?: number; retries?: number; clear?: boolean; speed?: number }) =>
+      withErrScreen(() =>
+        withTab(async t => {
+          await client.waitForSelector(selector, 30000, t);
+
+          if (humanMode) {
+            const human = new HumanClient(client);
+            await human.type({
+              selector,
+              text,
+              clear: opts?.clear ?? false,
+              speed: opts?.speed
+            }, t);
+          } else {
+            // Fallback to basic type (with optional clear)
+            if (opts?.clear) {
+              await client.evaluate(`
+                const el = document.querySelector('${selector.replace(/'/g, "\\'")}');
+                if (el) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
+              `, t);
+            }
+            await client.type(selector, text, t);
+          }
+
+          // Fire blur to trigger reactive frameworks
           await client.evaluate(`
-            (function() {
-              const el = document.querySelector('${selector}');
-              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-              nativeSetter.call(el, '${current.replace(/'/g, "\\'")}');
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-              el.dispatchEvent(new Event('change', { bubbles: true }));
-            })()
+            document.querySelector('${selector.replace(/'/g, "\\'")}')?.dispatchEvent(new Event('blur', { bubbles: true }));
           `, t);
-          const wpm = opts?.wpm ?? 120;
-          const msPerChar = Math.round(60000 / (wpm * 5));
-          await randomDelay(msPerChar * 0.5, msPerChar * 1.8);
-        }
-      } else if (opts?.delay) {
-        for (const ch of text) {
-          await client.type(selector, ch, t);
-          await new Promise(r => setTimeout(r, opts.delay));
-        }
-      } else {
-        await client.type(selector, text, t);
-      }
-      // fire blur so Phoenix/Angular/React pick up the final value
-      await client.evaluate(`
-        document.querySelector('${selector}').dispatchEvent(new Event('blur', { bubbles: true }))
-      `, t);
-      logger.success(`[${name}] typed into: ${selector}`);
-      return true;
-    }),
-    `type(${selector})`
-  ),
+
+          logger.success(`[${name}] typed into: ${selector}`);
+          return true;
+        }),
+        `type(${selector})`
+      ),
+
     select:   (selector: string, value: string) => withTab(t => client.select(selector, value, t)),
 
     evaluate: (js: string | (() => any), ...args: any[]) => {
@@ -240,7 +231,7 @@ export function createSiteObject(
             const chunk = px / steps;
             for (let i = 0; i < steps; i++) {
               await client.scrollBy(chunk, t);
-              await randomDelay(30, 80);
+              await new Promise(r => setTimeout(r, 30 + Math.random() * 50));
             }
           } else {
             await client.scrollBy(px, t);
@@ -248,7 +239,6 @@ export function createSiteObject(
         }) as Promise<void>,
     },
 
-    // ── Fetch ─────────────────────────────────────────────────────────────────
     fetchText:   (selector: string) => withTab(t => client.fetchText(selector, t)),
 
     fetchLinks: async (selector: string) => {
@@ -268,7 +258,6 @@ export function createSiteObject(
       id:  (query: string) => withTab(t => client.searchId(query, t)),
     },
 
-    // ── Screenshot / PDF ──────────────────────────────────────────────────────
     screenshot: async (filePath?: string) => {
       const r = await withTab(t => client.screenshot(filePath, t));
       logger.success(`[${name}] screenshot → ${filePath ?? "base64"}`);
@@ -284,7 +273,6 @@ export function createSiteObject(
     blockImages:   () => withTab(async t => { await client.blockImages(t);   logger.info(`[${name}] images blocked`); }),
     unblockImages: () => withTab(async t => { await client.unblockImages(t); logger.info(`[${name}] images unblocked`); }),
 
-    // ── Cookies ───────────────────────────────────────────────────────────────
     cookies: {
       set: async (cookieName: string, value: string, domain: string, path = "/") => {
         await withTab(t => client.setCookie(cookieName, value, domain, path, t));
@@ -298,7 +286,6 @@ export function createSiteObject(
       list: () => withTab(t => client.listCookies(t)),
     },
 
-    // ── Interception ──────────────────────────────────────────────────────────
     intercept: {
       block: async (pattern: string) => {
         await withTab(t => client.addInterceptRule("block", pattern, {}, t));
@@ -399,7 +386,6 @@ export function createSiteObject(
       },
     },
 
-    // ── Network capture ───────────────────────────────────────────────────────
     capture: {
       start:    () => withTab(async t => { await client.captureStart(t);  logger.info(`[${name}] capture started`); }),
       stop:     () => withTab(async t => { await client.captureStop(t);   logger.info(`[${name}] capture stopped`); }),
@@ -410,7 +396,6 @@ export function createSiteObject(
       clear:    () => withTab(async t => { await client.captureClear(t);  logger.info(`[${name}] capture cleared`); }),
     },
 
-    // ── Session ───────────────────────────────────────────────────────────────
     session: {
       export: async () => {
         const data = await withTab(t => client.sessionExport(t));
@@ -423,7 +408,6 @@ export function createSiteObject(
       },
     },
 
-    // ── Expose Function ───────────────────────────────────────────────────────
     exposeFunction: async (fnName: string, handler: (data: any) => Promise<any> | any) => {
       await client.exposeFunction(fnName, handler, tabId);
       logger.success(`[${name}] exposed function: ${fnName}`);
@@ -447,7 +431,6 @@ export function createSiteObject(
       return site;
     },
 
-    // ── Store ─────────────────────────────────────────────────────────────────
     store: async (
       data: Record<string, any> | Record<string, any>[],
       schemaName?: string
@@ -458,7 +441,6 @@ export function createSiteObject(
       return result;
     },
 
-    // ── Elysia API ────────────────────────────────────────────────────────────
     api: (
       path: string,
       handler: RouteHandler,

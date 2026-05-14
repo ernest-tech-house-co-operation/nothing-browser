@@ -1,5 +1,6 @@
 // piggy/session/index.ts
 import { PiggyClient } from "../client";
+import type { CookieSetOptions, CookieDeleteOptions } from "../export";
 
 export interface SessionPaths {
   workDir: string;
@@ -9,32 +10,15 @@ export interface SessionPaths {
   pings: string;
 }
 
-export interface CookieSetOptions {
-  name: string;
-  value: string;
-  domain: string;
-  path?: string;
-  httpOnly?: boolean;
-  secure?: boolean;
-  expiry?: number;
-}
-
-export interface CookieDeleteOptions {
-  name: string;
-  domain: string;
-}
-
 export class SessionClient {
   constructor(private client: PiggyClient) {}
 
-  // ── Session lifecycle ─────────────────────────────────────────────────────
-
+  // Session lifecycle
   reload(tabId = "default"): Promise<void> {
     return this.client.send("session.reload", { tabId });
   }
 
-  // ── Paths ─────────────────────────────────────────────────────────────────
-
+  // Paths
   paths(): Promise<SessionPaths> {
     return this.client.send("session.paths", {});
   }
@@ -55,8 +39,7 @@ export class SessionClient {
     return this.client.send("session.pings.path", {});
   }
 
-  // ── Opt-in persistence ────────────────────────────────────────────────────
-
+  // Opt-in persistence
   setWsSave(enabled: boolean): Promise<void> {
     return this.client.send("session.ws.save", { enabled });
   }
@@ -65,8 +48,7 @@ export class SessionClient {
     return this.client.send("session.pings.save", { enabled });
   }
 
-  // ── Export / import ───────────────────────────────────────────────────────
-
+  // Export / import
   async export(tabId = "default"): Promise<any> {
     const raw = await this.client.send<string>("session.export", { tabId });
     return typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -79,8 +61,7 @@ export class SessionClient {
     });
   }
 
-  // ── Cookies ───────────────────────────────────────────────────────────────
-
+  // Cookies (using imported types from export)
   setCookie(opts: CookieSetOptions, tabId = "default"): Promise<void> {
     return this.client.send("cookie.set", { ...opts, tabId });
   }

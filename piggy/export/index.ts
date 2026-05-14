@@ -1,20 +1,18 @@
 // piggy/export/index.ts
 import { PiggyClient } from "../client";
+import type { CapturedRequest, WebSocketFrame, CapturedCookie } from "../capture";
+import type { SessionPaths } from "../session";
 
 // ─── Intercept ────────────────────────────────────────────────────────────────
-// Field names match exactly what PiggyExport.cpp reads:
-// pattern, block, redirect, setHeaders, removeHeaders
-
 export interface InterceptRule {
   pattern: string;
   block?: boolean;
-  redirect?: string;                    // C++ reads "redirect" not "redirectUrl"
-  setHeaders?: Record<string, string>;  // C++ reads "setHeaders"
-  removeHeaders?: string[];             // C++ reads "removeHeaders"
+  redirect?: string;
+  setHeaders?: Record<string, string>;
+  removeHeaders?: string[];
 }
 
-// ─── Cookie ───────────────────────────────────────────────────────────────────
-
+// ─── Cookie types (defined here, imported by session) ────────────────────────
 export interface CookieSetOptions {
   name: string;
   value: string;
@@ -30,42 +28,8 @@ export interface CookieDeleteOptions {
   domain: string;
 }
 
-// ─── Session ──────────────────────────────────────────────────────────────────
-
-export interface SessionPaths {
-  workDir: string;
-  cookies: string;
-  profile: string;
-  ws: string;
-  pings: string;
-}
-
-// ─── Capture types ────────────────────────────────────────────────────────────
-
-export interface CapturedRequest {
-  method: string;
-  url: string;
-  status: string;
-  type: string;
-  mime: string;
-  reqHeaders: string;
-  reqBody: string;
-  resHeaders: string;
-  resBody: string;
-}
-
-export interface WebSocketFrame {
-  url: string;
-  direction: string;
-  data: string;
-  binary: boolean;
-}
-
-export interface CapturedCookie {
-  name: string;
-  value: string;
-  domain: string;
-}
+// ─── Session export types (re-exported from capture) ────────────────────────
+export type { CapturedRequest, WebSocketFrame, CapturedCookie, SessionPaths };
 
 export interface SessionExport {
   url: string;
@@ -82,12 +46,10 @@ export interface ExposedFunctionCall {
 }
 
 // ─── ExportClient ─────────────────────────────────────────────────────────────
-
 export class ExportClient {
   constructor(private client: PiggyClient) {}
 
-  // ── DOM fetch ─────────────────────────────────────────────────────────────
-
+  // DOM fetch
   searchCss(query: string, tabId = "default"): Promise<any> {
     return this.client.send("search.css", { query, tabId });
   }
@@ -96,8 +58,7 @@ export class ExportClient {
     return this.client.send("search.id", { query, tabId });
   }
 
-  // ── Cookies ───────────────────────────────────────────────────────────────
-
+  // Cookies
   setCookie(opts: CookieSetOptions, tabId = "default"): Promise<void> {
     return this.client.send("cookie.set", { ...opts, tabId });
   }
@@ -106,8 +67,7 @@ export class ExportClient {
     return this.client.send("cookie.delete", { ...opts, tabId });
   }
 
-  // ── Session ───────────────────────────────────────────────────────────────
-
+  // Session
   sessionReload(tabId = "default"): Promise<void> {
     return this.client.send("session.reload", { tabId });
   }
@@ -140,9 +100,7 @@ export class ExportClient {
     return this.client.send("session.pings.save", { enabled });
   }
 
-  // ── Intercept rules ───────────────────────────────────────────────────────
-  // Field names exactly match what PiggyExport.cpp reads
-
+  // Intercept rules
   addInterceptRule(rule: InterceptRule, tabId = "default"): Promise<void> {
     return this.client.send("intercept.rule.add", { ...rule, tabId });
   }
@@ -151,9 +109,7 @@ export class ExportClient {
     return this.client.send("intercept.rule.clear", { tabId });
   }
 
-  // ── Session export / import ───────────────────────────────────────────────
-  // C++ returns a JSON string from session.export so we parse it here
-
+  // Session export / import
   async exportSession(tabId = "default"): Promise<SessionExport> {
     const raw = await this.client.send<string>("session.export", { tabId });
     return typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -166,8 +122,7 @@ export class ExportClient {
     });
   }
 
-  // ── Exposed functions ─────────────────────────────────────────────────────
-
+  // Exposed functions
   exposeFunction(name: string, tabId = "default"): Promise<void> {
     return this.client.send("expose.function", { name, tabId });
   }
@@ -176,18 +131,13 @@ export class ExportClient {
     return this.client.send("exposed.result", { callId, result, isError, tabId });
   }
 
-  // ── Init scripts ──────────────────────────────────────────────────────────
-
+  // Init scripts
   addInitScript(js: string, tabId = "default"): Promise<void> {
     return this.client.send("addInitScript", { js, tabId });
   }
 
-  // ── Events ────────────────────────────────────────────────────────────────
-
-  onExposedFunctionCalled(
-    tabId: string,
-    handler: (call: ExposedFunctionCall) => void
-  ): () => void {
+  // Events
+  onExposedFunctionCalled(tabId: string, handler: (call: ExposedFunctionCall) => void): () => void {
     return this.client.onEvent("exposed_call", tabId, handler);
   }
 }
