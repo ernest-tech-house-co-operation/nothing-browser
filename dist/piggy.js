@@ -29333,11 +29333,11 @@ class FindClient {
   first(selector, tabId = "default") {
     return this.client.send("find.first", { selector, tabId });
   }
-  byText(opts, tabId = "default") {
-    return this.client.send("find.byText", { ...opts, tabId });
+  byText(text, tabId = "default") {
+    return this.client.send("find.byText", { text, tabId });
   }
-  byAttr(opts, tabId = "default") {
-    return this.client.send("find.byAttr", { ...opts, tabId });
+  byAttr(attr, value, tabId = "default") {
+    return this.client.send("find.byAttr", { attr, value, tabId });
   }
   byTag(tag, tabId = "default") {
     return this.client.send("find.byTag", { tag, tabId });
@@ -29345,20 +29345,17 @@ class FindClient {
   byPlaceholder(text, tabId = "default") {
     return this.client.send("find.byPlaceholder", { text, tabId });
   }
-  byRole(opts, tabId = "default") {
-    return this.client.send("find.byRole", { ...opts, tabId });
+  byRole(role, name, tabId = "default") {
+    return this.client.send("find.byRole", { role, name, tabId });
   }
   children(selector, tabId = "default") {
     return this.client.send("find.children", { selector, tabId });
   }
-  filter(opts, tabId = "default") {
-    return this.client.send("find.filter", { ...opts, tabId });
-  }
-  closest(opts, tabId = "default") {
-    return this.client.send("find.closest", { ...opts, tabId });
-  }
   parent(selector, tabId = "default") {
     return this.client.send("find.parent", { selector, tabId });
+  }
+  closest(selector, ancestor, tabId = "default") {
+    return this.client.send("find.closest", { selector, ancestor, tabId });
   }
   count(selector, tabId = "default") {
     return this.client.send("find.count", { selector, tabId });
@@ -29544,50 +29541,50 @@ class ProvideClient {
   constructor(client) {
     this.client = client;
   }
-  text(selector, tabId = "default") {
-    return this.client.send("provide.text", { selector, tabId });
+  text(opts, tabId = "default") {
+    return this.client.send("provide.text", { ...opts, tabId });
   }
-  textAll(selector, tabId = "default") {
-    return this.client.send("provide.textAll", { selector, tabId });
+  textAll(opts, tabId = "default") {
+    return this.client.send("provide.textAll", { ...opts, tabId });
   }
-  attr(selector, attr, tabId = "default") {
-    return this.client.send("provide.attr", { selector, attr, tabId });
+  attr(opts, tabId = "default") {
+    return this.client.send("provide.attr", { ...opts, tabId });
   }
-  attrAll(selector, attr, tabId = "default") {
-    return this.client.send("provide.attrAll", { selector, attr, tabId });
+  attrAll(opts, tabId = "default") {
+    return this.client.send("provide.attrAll", { ...opts, tabId });
   }
-  html(selector, tabId = "default") {
-    return this.client.send("provide.html", { selector, tabId });
+  html(opts, tabId = "default") {
+    return this.client.send("provide.html", { ...opts, tabId });
   }
-  table(selector, tabId = "default") {
-    return this.client.send("provide.table", { selector, tabId });
+  table(opts, tabId = "default") {
+    return this.client.send("provide.table", { ...opts, tabId });
   }
-  list(selector, itemSel, tabId = "default") {
-    return this.client.send("provide.list", { selector, itemSel, tabId });
+  list(opts, tabId = "default") {
+    return this.client.send("provide.list", { ...opts, tabId });
   }
-  links(selector, tabId = "default") {
-    return this.client.send("provide.links", { selector, tabId });
+  links(opts, tabId = "default") {
+    return this.client.send("provide.links", { ...opts, tabId });
   }
-  images(selector, tabId = "default") {
-    return this.client.send("provide.images", { selector, tabId });
+  images(opts, tabId = "default") {
+    return this.client.send("provide.images", { ...opts, tabId });
   }
-  form(selector, tabId = "default") {
-    return this.client.send("provide.form", { selector, tabId });
+  form(opts, tabId = "default") {
+    return this.client.send("provide.form", { ...opts, tabId });
   }
   page(tabId = "default") {
     return this.client.send("provide.page", { tabId });
   }
-  div(selector, tabId = "default") {
-    return this.client.send("provide.div", { selector, tabId });
+  div(opts, tabId = "default") {
+    return this.client.send("provide.div", { ...opts, tabId });
   }
   meta(tabId = "default") {
     return this.client.send("provide.meta", { tabId });
   }
-  select(selector, tabId = "default") {
-    return this.client.send("provide.select", { selector, tabId });
+  select(opts, tabId = "default") {
+    return this.client.send("provide.select", { ...opts, tabId });
   }
-  json(selector, tabId = "default") {
-    return this.client.send("provide.json", { selector, tabId });
+  json(opts, tabId = "default") {
+    return this.client.send("provide.json", { ...opts, tabId });
   }
 }
 function createProvideAPI(client) {

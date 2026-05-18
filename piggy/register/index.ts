@@ -6,7 +6,14 @@ import { routeRegistry, keepAliveSites, type RouteHandler, type BeforeMiddleware
 import { buildRespondScript, buildModifyResponseScript } from "../intercept/scripts";
 import { storeRecord } from "../store";
 import { TabPool } from "../pool";
-
+import { createFindAPI } from "../find";
+import { createProvideAPI } from "../provide";
+import { createHumanAPI } from "../human";
+import { createSessionAPI } from "../session";
+import { DialogClient } from "../dialog";
+import { createIframeAPI } from "../iframe";
+import { exposeFunction, unexposeFunction, clearExposedFunctions, exposeAndInject  } from "../expose";
+import { createCaptchaAPI } from "../captcha";
 let globalClient: PiggyClient | null = null;
 export let humanMode = false;
 
@@ -104,6 +111,18 @@ export function createSiteObject(
         logger.debug(`[${name}] waitForSelector: ${selector}`);
         return client.waitForSelector(selector, timeout, t);
       }),
+
+exposeFunction:        (fnName: string, handler: (data: any) => Promise<any> | any) =>
+  exposeFunction(client, fnName, handler, tabId).then(() => site),
+
+unexposeFunction:      (fnName: string) =>
+  unexposeFunction(client, fnName, tabId).then(() => site),
+
+clearExposedFunctions: () =>
+  clearExposedFunctions(client, tabId).then(() => site),
+
+exposeAndInject: (fnName: string, handler: (data: any) => Promise<any> | any, injectionJs: string | ((fnName: string) => string)) =>
+  exposeAndInject(client, fnName, handler, injectionJs, tabId).then(() => site),
 
     waitForVisible:  (selector: string, timeout = 30000) =>
       withTab(t => client.waitForSelector(selector, timeout, t)),
@@ -257,6 +276,69 @@ export function createSiteObject(
       css: (query: string) => withTab(t => client.searchCss(query, t)),
       id:  (query: string) => withTab(t => client.searchId(query, t)),
     },
+    captcha: {
+  status:    ()                        => withTab(t => createCaptchaAPI(client).status(t)),
+  resolve:   ()                        => withTab(t => createCaptchaAPI(client).resolve(t)),
+  pause:     ()                        => withTab(t => createCaptchaAPI(client).pause(t)),
+  check:     ()                        => withTab(t => createCaptchaAPI(client).check(t)),
+  autoRetry: (opts: { enabled: boolean }) => withTab(t => createCaptchaAPI(client).setAutoRetry(opts.enabled)),
+  onCaptcha: (handler: any)            => createCaptchaAPI(client).onCaptcha(tabId, handler),
+  onResolved:(handler: any)            => createCaptchaAPI(client).onCaptchaResolved(tabId, handler),
+},
+block: {
+  status:    ()                        => withTab(t => createCaptchaAPI(client).blockStatus(t)),
+  retry:     ()                        => withTab(t => createCaptchaAPI(client).blockRetry(t)),
+  onBlocked: (handler: any)            => createCaptchaAPI(client).onBlocked(tabId, handler),
+  onRetry:   (handler: any)            => createCaptchaAPI(client).onBlockRetry(tabId, handler),
+},
+    find: {
+css: (selector: string) => withTab(t => {
+  console.log("[DEBUG] find.css tabId:", t);
+  return createFindAPI(client).css(selector, t);
+}),
+  all:           (selector: string)                        => withTab(t => createFindAPI(client).all(selector, t)),
+  first:         (selector: string)                        => withTab(t => createFindAPI(client).first(selector, t)),
+  byText:        (text: string)                            => withTab(t => createFindAPI(client).byText(text, t)),
+  byAttr:        (attr: string, value?: string)            => withTab(t => createFindAPI(client).byAttr(attr, value, t)),
+  byTag:         (tag: string)                             => withTab(t => createFindAPI(client).byTag(tag, t)),
+  byPlaceholder: (text: string)                            => withTab(t => createFindAPI(client).byPlaceholder(text, t)),
+  byRole:        (role: string, name?: string)             => withTab(t => createFindAPI(client).byRole(role, name, t)),
+  children:      (selector: string)                        => withTab(t => createFindAPI(client).children(selector, t)),
+  parent:        (selector: string)                        => withTab(t => createFindAPI(client).parent(selector, t)),
+  closest:       (selector: string, ancestor: string)      => withTab(t => createFindAPI(client).closest(selector, ancestor, t)),
+  count:         (selector: string)                        => withTab(t => createFindAPI(client).count(selector, t)),
+  exists:        (selector: string)                        => withTab(t => createFindAPI(client).exists(selector, t)),
+  visible:       (selector: string)                        => withTab(t => createFindAPI(client).visible(selector, t)),
+  enabled:       (selector: string)                        => withTab(t => createFindAPI(client).enabled(selector, t)),
+  checked:       (selector: string)                        => withTab(t => createFindAPI(client).checked(selector, t)),
+},
+
+provide: {
+  text:    (opts: any)              => withTab(t => createProvideAPI(client).text(opts, t)),
+  textAll: (opts: any)              => withTab(t => createProvideAPI(client).textAll(opts, t)),
+  attr:    (opts: any)              => withTab(t => createProvideAPI(client).attr(opts, t)),
+  attrAll: (opts: any)              => withTab(t => createProvideAPI(client).attrAll(opts, t)),
+  html:    (opts: any)              => withTab(t => createProvideAPI(client).html(opts, t)),
+  table:   (opts: any)              => withTab(t => createProvideAPI(client).table(opts, t)),
+  list:    (opts: any)              => withTab(t => createProvideAPI(client).list(opts, t)),
+  links:   (opts: any)              => withTab(t => createProvideAPI(client).links(opts, t)),
+  images:  (opts: any)              => withTab(t => createProvideAPI(client).images(opts, t)),
+  form:    (opts: any)              => withTab(t => createProvideAPI(client).form(opts, t)),
+  page:    ()                       => withTab(t => createProvideAPI(client).page(t)),
+  div:     (opts: any)              => withTab(t => createProvideAPI(client).div(opts, t)),
+  meta:    ()                       => withTab(t => createProvideAPI(client).meta(t)),
+  select:  (opts: any)              => withTab(t => createProvideAPI(client).select(opts, t)),
+  json:    (opts?: any)             => withTab(t => createProvideAPI(client).json(opts, t)),
+},
+iframe: {
+  list:    ()          => withTab(t => createIframeAPI(client).list(t)),
+  evaluate:(opts: any) => withTab(t => createIframeAPI(client).evaluate(opts, t)),
+  click:   (opts: any) => withTab(t => createIframeAPI(client).click(opts, t)),
+  type:    (opts: any) => withTab(t => createIframeAPI(client).type(opts, t)),
+  text:    (opts: any) => withTab(t => createIframeAPI(client).text(opts, t)),
+  html:    (opts: any) => withTab(t => createIframeAPI(client).html(opts, t)),
+  waitSel: (opts: any) => withTab(t => createIframeAPI(client).waitSel(opts, t)),
+},
 
     screenshot: async (filePath?: string) => {
       const r = await withTab(t => client.screenshot(filePath, t));
@@ -269,6 +351,13 @@ export function createSiteObject(
       logger.success(`[${name}] pdf → ${filePath ?? "base64"}`);
       return r;
     },
+        human: {
+      set:   (opts: any)              => withTab(t => createHumanAPI(client).set(opts, t)),
+      get:   ()                       => withTab(t => createHumanAPI(client).get(t)),
+      type:  (opts: any)              => withTab(t => createHumanAPI(client).type(opts, t)),
+      click: (opts: any)              => withTab(t => createHumanAPI(client).click(opts, t)),
+    },
+
 
     blockImages:   () => withTab(async t => { await client.blockImages(t);   logger.info(`[${name}] images blocked`); }),
     unblockImages: () => withTab(async t => { await client.unblockImages(t); logger.info(`[${name}] images unblocked`); }),
@@ -278,14 +367,14 @@ export function createSiteObject(
         await withTab(t => client.setCookie(cookieName, value, domain, path, t));
         logger.info(`[${name}] cookie set: ${cookieName} @ ${domain}`);
       },
-      get:    (cookieName: string) => withTab(t => client.getCookie(cookieName, t)),
-      delete: async (cookieName: string) => {
-        await withTab(t => client.deleteCookie(cookieName, t));
+      get: (cookieName: string, domain = "") => withTab(t => client.getCookie(cookieName, domain, t)),
+      delete: async (cookieName: string, domain?: string) => {
+        const d = domain ?? new URL(registeredUrl).hostname;
+        await withTab(t => client.deleteCookie(cookieName, d, t));
         logger.info(`[${name}] cookie deleted: ${cookieName}`);
       },
-      list: () => withTab(t => client.listCookies(t)),
+      list: (domain = "") => withTab(t => client.listCookies(domain, t)),
     },
-
     intercept: {
       block: async (pattern: string) => {
         await withTab(t => client.addInterceptRule("block", pattern, {}, t));
@@ -385,6 +474,16 @@ export function createSiteObject(
         logger.info(`[${name}] intercept rules cleared`);
       },
     },
+    dialog: {
+      accept:        (tabId = "default", text?: string)                     => new DialogClient(client).accept(tabId, text),
+      dismiss:       (tabId = "default")                                    => new DialogClient(client).dismiss(tabId),
+      status:        (tabId = "default")                                    => new DialogClient(client).status(tabId),
+      setAutoAction: (tabId = "default", action: "accept" | "dismiss" | "") => new DialogClient(client).setAutoAction(tabId, action),
+      upload:        (selector: string, filePath: string, tabId = "default") => new DialogClient(client).upload(selector, filePath, tabId),
+      onDialog:      (tabId: string, handler: (data: any) => void)          => new DialogClient(client).onDialog(tabId, handler),
+      waitAndAccept: (tabId = "default", text?: string, timeoutMs = 30000)  => new DialogClient(client).waitAndAccept(tabId, text, timeoutMs),
+      waitAndDismiss:(tabId = "default", timeoutMs = 30000)                 => new DialogClient(client).waitAndDismiss(tabId, timeoutMs),
+    },  
 
     capture: {
       start:    () => withTab(async t => { await client.captureStart(t);  logger.info(`[${name}] capture started`); }),
@@ -396,40 +495,16 @@ export function createSiteObject(
       clear:    () => withTab(async t => { await client.captureClear(t);  logger.info(`[${name}] capture cleared`); }),
     },
 
-    session: {
-      export: async () => {
-        const data = await withTab(t => client.sessionExport(t));
-        logger.success(`[${name}] session exported`);
-        return data;
-      },
-      import: async (data: any) => {
-        await withTab(t => client.sessionImport(data, t));
-        logger.success(`[${name}] session imported`);
-      },
-    },
-
-    exposeFunction: async (fnName: string, handler: (data: any) => Promise<any> | any) => {
-      await client.exposeFunction(fnName, handler, tabId);
-      logger.success(`[${name}] exposed function: ${fnName}`);
-      return site;
-    },
-    unexposeFunction: async (fnName: string) => {
-      await client.unexposeFunction(fnName, tabId);
-      logger.info(`[${name}] unexposed function: ${fnName}`);
-      return site;
-    },
-    clearExposedFunctions: async () => {
-      await client.clearExposedFunctions(tabId);
-      logger.info(`[${name}] cleared all exposed functions`);
-      return site;
-    },
-    exposeAndInject: async (fnName: string, handler: (data: any) => Promise<any> | any, injectionJs: string | ((fnName: string) => string)) => {
-      await client.exposeFunction(fnName, handler, tabId);
-      const js = typeof injectionJs === "function" ? injectionJs(fnName) : injectionJs;
-      await withTab(t => client.evaluate(js, t));
-      logger.success(`[${name}] exposed and injected: ${fnName}`);
-      return site;
-    },
+        session: {
+    export:  ()        => withTab(t => createSessionAPI(client).export(t)),
+    import:  (data: any) => withTab(t => createSessionAPI(client).import(data, t)),
+    reload:  ()        => withTab(t => createSessionAPI(client).reload(t)),
+    paths:   ()        => createSessionAPI(client).paths(),
+    cookies: { path: () => createSessionAPI(client).cookiesPath() },
+    profile: { path: () => createSessionAPI(client).profilePath() },
+    ws:      { save: (opts: any) => createSessionAPI(client).setWsSave(opts.enabled) },
+    pings:   { save: (opts: any) => createSessionAPI(client).setPingsSave(opts.enabled) },
+  },
 
     store: async (
       data: Record<string, any> | Record<string, any>[],

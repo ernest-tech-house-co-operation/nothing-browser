@@ -1,4 +1,4 @@
-// piggy/client/index.ts
+//piggy/client/index.ts 
 import { connect, type Socket } from "net";
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
@@ -280,6 +280,23 @@ export class PiggyClient {
         }
       }
     }
+
+    if (event.event === "dialog") {
+      const key = `dialog:${event.tabId ?? "default"}`;
+      const handlers = this.globalEventHandlers.get(key);
+      if (handlers) {
+        for (const h of handlers) {
+          try {
+            h({
+              dialogType:   event.dialogType,
+              message:      event.message,
+              defaultValue: event.defaultValue,
+              tabId:        event.tabId,
+            });
+          } catch (e) { logger.error(`dialog handler error: ${e}`); }
+        }
+      }
+    }
   }
 
   onEvent(eventName: string, tabId: string, handler: (data: any) => void): () => void {
@@ -384,9 +401,9 @@ export class PiggyClient {
 
   // ── Cookies ───────────────────────────────────────────────────────────────
   async setCookie(name: string, value: string, domain: string, path = "/", tabId = "default"): Promise<void> { await this.send("cookie.set", { name, value, domain, path, tabId }); }
-  async getCookie(name: string, tabId = "default"): Promise<any> { return this.send("cookie.get", { name, tabId }); }
-  async deleteCookie(name: string, tabId = "default"): Promise<void> { await this.send("cookie.delete", { name, tabId }); }
-  async listCookies(tabId = "default"): Promise<any[]> { return this.send<any[]>("cookie.list", { tabId }); }
+  async getCookie(name: string, domain = "", tabId = "default"): Promise<any> { return this.send("cookie.get", { name, domain, tabId }); }
+  async deleteCookie(name: string, domain: string, tabId = "default"): Promise<void> { await this.send("cookie.delete", { name, domain, tabId }); }
+  async listCookies(domain = "", tabId = "default"): Promise<any[]> { return this.send<any[]>("cookie.list", { domain, tabId }); }
 
   // ── Interception ──────────────────────────────────────────────────────────
   async addInterceptRule(action: "block" | "redirect" | "modifyHeaders", pattern: string, options: { redirectUrl?: string; headers?: Record<string, string> } = {}, tabId = "default"): Promise<void> {
@@ -407,55 +424,14 @@ export class PiggyClient {
   async sessionExport(tabId = "default"): Promise<any> { return this.send("session.export", { tabId }); }
   async sessionImport(data: any, tabId = "default"): Promise<void> { await this.send("session.import", { data, tabId }); }
 
-  // ── Session persistence (opt-in) ──────────────────────────────────────────
-  // WS frames and pings are NOT saved by default — you must opt in.
-  // Files are written to cwd (same folder as cookies.json / profile.json).
-
-  /** Enable or disable saving WebSocket frames to ws.json in cwd */
-  async sessionWsSave(enabled = true): Promise<void> {
-    await this.send("session.ws.save", { enabled });
-  }
-
-  /** Enable or disable saving ping log to pings.json in cwd */
-  async sessionPingsSave(enabled = true): Promise<void> {
-    await this.send("session.pings.save", { enabled });
-  }
-
-  /** Get all data file paths for the current session */
-  async sessionPaths(): Promise<{
-    workDir: string;
-    cookies: string;
-    profile: string;
-    ws: string;
-    pings: string;
-  }> {
-    return this.send("session.paths", {});
-  }
-
-  /** Get path to cookies.json */
-  async sessionCookiesPath(): Promise<string> {
-    return this.send("session.cookies.path", {});
-  }
-
-  /** Get path to profile.json */
-  async sessionProfilePath(): Promise<string> {
-    return this.send("session.profile.path", {});
-  }
-
-  /** Get path to ws.json */
-  async sessionWsPath(): Promise<string> {
-    return this.send("session.ws.path", {});
-  }
-
-  /** Get path to pings.json */
-  async sessionPingsPath(): Promise<string> {
-    return this.send("session.pings.path", {});
-  }
-
-  /** Reload cookies.json and profile.json from disk without restarting */
-  async sessionReload(): Promise<void> {
-    await this.send("session.reload", {});
-  }
+  async sessionWsSave(enabled = true): Promise<void> { await this.send("session.ws.save", { enabled }); }
+  async sessionPingsSave(enabled = true): Promise<void> { await this.send("session.pings.save", { enabled }); }
+  async sessionPaths(): Promise<{ workDir: string; cookies: string; profile: string; ws: string; pings: string; }> { return this.send("session.paths", {}); }
+  async sessionCookiesPath(): Promise<string> { return this.send("session.cookies.path", {}); }
+  async sessionProfilePath(): Promise<string> { return this.send("session.profile.path", {}); }
+  async sessionWsPath(): Promise<string> { return this.send("session.ws.path", {}); }
+  async sessionPingsPath(): Promise<string> { return this.send("session.pings.path", {}); }
+  async sessionReload(): Promise<void> { await this.send("session.reload", {}); }
 
   // ── Expose Function ───────────────────────────────────────────────────────
   async exposeFunction(name: string, handler: (data: any) => Promise<any> | any, tabId = "default"): Promise<void> {
@@ -485,82 +461,28 @@ export class PiggyClient {
   }
 
   // ── Proxy ─────────────────────────────────────────────────────────────────
-
-  async proxyLoad(path: string): Promise<void> {
-    await this.send("proxy.load", { path });
-  }
-
-  async proxyFetch(url: string): Promise<void> {
-    await this.send("proxy.fetch", { url });
-  }
-
-  async proxyOvpn(path: string): Promise<void> {
-    await this.send("proxy.ovpn", { path });
-  }
+  async proxyLoad(path: string): Promise<void> { await this.send("proxy.load", { path }); }
+  async proxyFetch(url: string): Promise<void> { await this.send("proxy.fetch", { url }); }
+  async proxyOvpn(path: string): Promise<void> { await this.send("proxy.ovpn", { path }); }
 
   async proxySet(opts: {
-    host?: string;
-    port?: number;
+    host?: string; port?: number;
     type?: "http" | "https" | "socks5" | "socks4";
-    user?: string;
-    pass?: string;
-    proxy?: string;
-  }): Promise<void> {
-    await this.send("proxy.set", opts as Record<string, any>);
-  }
+    user?: string; pass?: string; proxy?: string;
+  }): Promise<void> { await this.send("proxy.set", opts as Record<string, any>); }
 
-  async proxyTest(): Promise<void> {
-    await this.send("proxy.test", {});
-  }
+  async proxyTest(): Promise<void> { await this.send("proxy.test", {}); }
+  async proxyTestStop(): Promise<void> { await this.send("proxy.test.stop", {}); }
+  async proxyNext(): Promise<void> { await this.send("proxy.next", {}); }
+  async proxyDisable(): Promise<void> { await this.send("proxy.disable", {}); }
+  async proxyEnable(): Promise<void> { await this.send("proxy.enable", {}); }
 
-  async proxyTestStop(): Promise<void> {
-    await this.send("proxy.test.stop", {});
-  }
-
-  async proxyNext(): Promise<void> {
-    await this.send("proxy.next", {});
-  }
-
-  async proxyDisable(): Promise<void> {
-    await this.send("proxy.disable", {});
-  }
-
-  async proxyEnable(): Promise<void> {
-    await this.send("proxy.enable", {});
-  }
-
-  async proxyCurrent(): Promise<{
-    host: string; port: number; type: string;
-    user?: string; alive: boolean; latencyMs?: number;
-  }> {
-    return this.send("proxy.current", {});
-  }
-
-  async proxyStats(): Promise<{
-    total: number; alive: number; dead: number;
-    index: number; checking: boolean;
-  }> {
-    return this.send("proxy.stats", {});
-  }
-
-  async proxyList(limit?: number): Promise<{
-    host: string; port: number; type: string;
-    alive: boolean; latencyMs?: number;
-  }[]> {
-    return this.send("proxy.list", limit !== undefined ? { limit } : {});
-  }
-
-  async proxyRotation(mode: "none" | "timed" | "perrequest", interval?: number): Promise<void> {
-    await this.send("proxy.rotation", { mode, ...(interval !== undefined ? { interval } : {}) });
-  }
-
-  async proxyConfig(opts: { skipDead?: boolean; autoCheck?: boolean }): Promise<void> {
-    await this.send("proxy.config", opts as Record<string, any>);
-  }
-
-  async proxySave(path: string, filter: "alive" | "dead" | "all" = "all"): Promise<void> {
-    await this.send("proxy.save", { path, filter });
-  }
+  async proxyCurrent(): Promise<{ host: string; port: number; type: string; user?: string; alive: boolean; latencyMs?: number; }> { return this.send("proxy.current", {}); }
+  async proxyStats(): Promise<{ total: number; alive: number; dead: number; index: number; checking: boolean; }> { return this.send("proxy.stats", {}); }
+  async proxyList(limit?: number): Promise<{ host: string; port: number; type: string; alive: boolean; latencyMs?: number; }[]> { return this.send("proxy.list", limit !== undefined ? { limit } : {}); }
+  async proxyRotation(mode: "none" | "timed" | "perrequest", interval?: number): Promise<void> { await this.send("proxy.rotation", { mode, ...(interval !== undefined ? { interval } : {}) }); }
+  async proxyConfig(opts: { skipDead?: boolean; autoCheck?: boolean }): Promise<void> { await this.send("proxy.config", opts as Record<string, any>); }
+  async proxySave(path: string, filter: "alive" | "dead" | "all" = "all"): Promise<void> { await this.send("proxy.save", { path, filter }); }
 
   onProxyEvent(event: string, handler: (data: any) => void): () => void {
     return this.onEvent(event, "*", handler);

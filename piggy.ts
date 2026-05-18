@@ -1,4 +1,5 @@
 // piggy.ts
+//the main file
 import { detectBinary, type BinaryMode } from "./piggy/launch/detect";
 import { spawnBrowser, killBrowser, spawnBrowserOnSocket } from "./piggy/launch/spawn";
 import { PiggyClient } from "./piggy/client";
@@ -121,7 +122,8 @@ const piggy: any = {
 
   // ── Sub-APIs (1:1 with C++ files, available after launch/connect) ─────────
 
-  get tabs()         { return _router?.tabs         ?? createTabsAPI(guardClient()); },
+    get tabs()         { return _router?.tabs         ?? createTabsAPI(guardClient()); },
+    get tab()         { return _router?.tabs         ?? createTabsAPI(guardClient()); },
   get navigation()   { return _router?.navigation   ?? createNavigationAPI(guardClient()); },
   get interactions() { return _router?.interactions ?? createInteractionsAPI(guardClient()); },
   get media()        { return _router?.media        ?? createMediaAPI(guardClient()); },

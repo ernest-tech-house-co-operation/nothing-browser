@@ -1,6 +1,29 @@
 // piggy/provide/index.ts
 import { PiggyClient } from "../client";
 
+// ─── Shared base option ───────────────────────────────────────────────────────
+// Every provide method targets a selector, and optionally scopes under a parent.
+
+export interface ProvideOptions {
+  /** CSS selector for the target element(s). */
+  selector: string;
+  /**
+   * Optional parent selector to scope the query under.
+   * Equivalent to: parent.querySelector(selector)
+   */
+  parent?: string;
+}
+
+export interface ProvideAttrOptions extends ProvideOptions {
+  /** The attribute name to extract. */
+  attr: string;
+}
+
+export interface ProvideListOptions extends ProvideOptions {
+  /** Optional child selector to scope list items. */
+  itemSel?: string;
+}
+
 // ─── Return types ─────────────────────────────────────────────────────────────
 
 export interface ProvideTable {
@@ -54,86 +77,89 @@ export interface ProvideSelect {
 }
 
 // ─── ProvideClient ────────────────────────────────────────────────────────────
+// provide answers ONE question: "give me the actual value from this element."
+// All methods take an options object { selector, parent? } so scoping is consistent.
+// If you just want to know if something exists, use find instead.
 
 export class ProvideClient {
   constructor(private client: PiggyClient) {}
 
   /** innerText of the first matched element. */
-  text(selector: string, tabId = "default"): Promise<string> {
-    return this.client.send("provide.text", { selector, tabId });
+  text(opts: ProvideOptions, tabId = "default"): Promise<string> {
+    return this.client.send("provide.text", { ...opts, tabId });
   }
 
   /** innerText of all matched elements. */
-  textAll(selector: string, tabId = "default"): Promise<string[]> {
-    return this.client.send("provide.textAll", { selector, tabId });
+  textAll(opts: ProvideOptions, tabId = "default"): Promise<string[]> {
+    return this.client.send("provide.textAll", { ...opts, tabId });
   }
 
   /** Single attribute value from the first matched element. */
-  attr(selector: string, attr: string, tabId = "default"): Promise<string> {
-    return this.client.send("provide.attr", { selector, attr, tabId });
+  attr(opts: ProvideAttrOptions, tabId = "default"): Promise<string> {
+    return this.client.send("provide.attr", { ...opts, tabId });
   }
 
   /** Attribute value from all matched elements. */
-  attrAll(selector: string, attr: string, tabId = "default"): Promise<string[]> {
-    return this.client.send("provide.attrAll", { selector, attr, tabId });
+  attrAll(opts: ProvideAttrOptions, tabId = "default"): Promise<string[]> {
+    return this.client.send("provide.attrAll", { ...opts, tabId });
   }
 
   /** innerHTML of the first matched element. */
-  html(selector: string, tabId = "default"): Promise<string> {
-    return this.client.send("provide.html", { selector, tabId });
+  html(opts: ProvideOptions, tabId = "default"): Promise<string> {
+    return this.client.send("provide.html", { ...opts, tabId });
   }
 
   /** Extract a table into headers + rows. */
-  table(selector: string, tabId = "default"): Promise<ProvideTable> {
-    return this.client.send("provide.table", { selector, tabId });
+  table(opts: ProvideOptions, tabId = "default"): Promise<ProvideTable> {
+    return this.client.send("provide.table", { ...opts, tabId });
   }
 
-  /** Extract a list of text items. Optionally scope items with itemSel. */
-  list(selector: string, itemSel?: string, tabId = "default"): Promise<string[]> {
-    return this.client.send("provide.list", { selector, itemSel, tabId });
+  /** Extract a list of text items, optionally scoped to child items. */
+  list(opts: ProvideListOptions, tabId = "default"): Promise<string[]> {
+    return this.client.send("provide.list", { ...opts, tabId });
   }
 
-  /** All links inside an optional selector. */
-  links(selector?: string, tabId = "default"): Promise<ProvideLink[]> {
-    return this.client.send("provide.links", { selector, tabId });
+  /** All links inside the matched selector. */
+  links(opts: ProvideOptions, tabId = "default"): Promise<ProvideLink[]> {
+    return this.client.send("provide.links", { ...opts, tabId });
   }
 
-  /** All images inside an optional selector. */
-  images(selector?: string, tabId = "default"): Promise<ProvideImage[]> {
-    return this.client.send("provide.images", { selector, tabId });
+  /** All images inside the matched selector. */
+  images(opts: ProvideOptions, tabId = "default"): Promise<ProvideImage[]> {
+    return this.client.send("provide.images", { ...opts, tabId });
   }
 
   /** Form field name→value map. */
-  form(selector: string, tabId = "default"): Promise<ProvideForm> {
-    return this.client.send("provide.form", { selector, tabId });
+  form(opts: ProvideOptions, tabId = "default"): Promise<ProvideForm> {
+    return this.client.send("provide.form", { ...opts, tabId });
   }
 
-  /** Full page info: title, url, html, text. */
+  /** Full page info: title, url, html, text. No selector needed. */
   page(tabId = "default"): Promise<ProvidePage> {
     return this.client.send("provide.page", { tabId });
   }
 
-  /** Structured div: tag, id, cls, text, html, children[]. */
-  div(selector: string, tabId = "default"): Promise<ProvideDiv> {
-    return this.client.send("provide.div", { selector, tabId });
+  /** Structured div tree: tag, id, cls, text, html, children[]. */
+  div(opts: ProvideOptions, tabId = "default"): Promise<ProvideDiv> {
+    return this.client.send("provide.div", { ...opts, tabId });
   }
 
-  /** All <meta> name→content pairs. */
+  /** All <meta> name→content pairs. No selector needed. */
   meta(tabId = "default"): Promise<ProvideMeta> {
     return this.client.send("provide.meta", { tabId });
   }
 
   /** <select> current value + all options. */
-  select(selector: string, tabId = "default"): Promise<ProvideSelect> {
-    return this.client.send("provide.select", { selector, tabId });
+  select(opts: ProvideOptions, tabId = "default"): Promise<ProvideSelect> {
+    return this.client.send("provide.select", { ...opts, tabId });
   }
 
   /**
    * Parse JSON from element innerText or script[type=application/json].
    * selector is optional — defaults to the first matching JSON script tag.
    */
-  json(selector?: string, tabId = "default"): Promise<unknown> {
-    return this.client.send("provide.json", { selector, tabId });
+  json(opts?: Partial<ProvideOptions>, tabId = "default"): Promise<unknown> {
+    return this.client.send("provide.json", { ...opts, tabId });
   }
 }
 

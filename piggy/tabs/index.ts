@@ -8,7 +8,8 @@ export class TabsClient {
     return this.client.send("tab.new", {});
   }
 
-  close(tabId: string): Promise<void> {
+  close(opts: string | { tabId: string }): Promise<void> {
+    const tabId = typeof opts === "string" ? opts : opts.tabId;
     return this.client.send("tab.close", { tabId });
   }
 
