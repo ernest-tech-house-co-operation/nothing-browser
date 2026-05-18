@@ -3,7 +3,9 @@ export declare class TabsClient {
     private client;
     constructor(client: PiggyClient);
     new(): Promise<string>;
-    close(tabId: string): Promise<void>;
+    close(opts: string | {
+        tabId: string;
+    }): Promise<void>;
     list(): Promise<string[]>;
 }
 export declare function createTabsAPI(client: PiggyClient): TabsClient;

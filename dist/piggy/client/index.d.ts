@@ -63,9 +63,9 @@ export declare class PiggyClient {
     blockImages(tabId?: string): Promise<void>;
     unblockImages(tabId?: string): Promise<void>;
     setCookie(name: string, value: string, domain: string, path?: string, tabId?: string): Promise<void>;
-    getCookie(name: string, tabId?: string): Promise<any>;
-    deleteCookie(name: string, tabId?: string): Promise<void>;
-    listCookies(tabId?: string): Promise<any[]>;
+    getCookie(name: string, domain?: string, tabId?: string): Promise<any>;
+    deleteCookie(name: string, domain: string, tabId?: string): Promise<void>;
+    listCookies(domain?: string, tabId?: string): Promise<any[]>;
     addInterceptRule(action: "block" | "redirect" | "modifyHeaders", pattern: string, options?: {
         redirectUrl?: string;
         headers?: Record<string, string>;
@@ -80,11 +80,8 @@ export declare class PiggyClient {
     captureClear(tabId?: string): Promise<void>;
     sessionExport(tabId?: string): Promise<any>;
     sessionImport(data: any, tabId?: string): Promise<void>;
-    /** Enable or disable saving WebSocket frames to ws.json in cwd */
     sessionWsSave(enabled?: boolean): Promise<void>;
-    /** Enable or disable saving ping log to pings.json in cwd */
     sessionPingsSave(enabled?: boolean): Promise<void>;
-    /** Get all data file paths for the current session */
     sessionPaths(): Promise<{
         workDir: string;
         cookies: string;
@@ -92,15 +89,10 @@ export declare class PiggyClient {
         ws: string;
         pings: string;
     }>;
-    /** Get path to cookies.json */
     sessionCookiesPath(): Promise<string>;
-    /** Get path to profile.json */
     sessionProfilePath(): Promise<string>;
-    /** Get path to ws.json */
     sessionWsPath(): Promise<string>;
-    /** Get path to pings.json */
     sessionPingsPath(): Promise<string>;
-    /** Reload cookies.json and profile.json from disk without restarting */
     sessionReload(): Promise<void>;
     exposeFunction(name: string, handler: (data: any) => Promise<any> | any, tabId?: string): Promise<void>;
     unexposeFunction(name: string, tabId?: string): Promise<void>;

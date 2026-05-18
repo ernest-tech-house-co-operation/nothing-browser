@@ -6824,6 +6824,9 @@ class HumanClient {
     return this.client.send("human.click", { ...opts, tabId });
   }
 }
+function createHumanAPI(client) {
+  return new HumanClient(client);
+}
 
 // piggy/logger/index.ts
 var import_ernest_logger = __toESM(require_ernest_logger(), 1);
@@ -22887,6 +22890,336 @@ async function storeRecord(storeName, data) {
   return { stored, skipped };
 }
 
+// piggy/find/index.ts
+class FindClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  css(selector, tabId = "default") {
+    return this.client.send("find.css", { selector, tabId });
+  }
+  all(selector, tabId = "default") {
+    return this.client.send("find.all", { selector, tabId });
+  }
+  first(selector, tabId = "default") {
+    return this.client.send("find.first", { selector, tabId });
+  }
+  byText(text, tabId = "default") {
+    return this.client.send("find.byText", { text, tabId });
+  }
+  byAttr(attr, value, tabId = "default") {
+    return this.client.send("find.byAttr", { attr, value, tabId });
+  }
+  byTag(tag, tabId = "default") {
+    return this.client.send("find.byTag", { tag, tabId });
+  }
+  byPlaceholder(text, tabId = "default") {
+    return this.client.send("find.byPlaceholder", { text, tabId });
+  }
+  byRole(role, name, tabId = "default") {
+    return this.client.send("find.byRole", { role, name, tabId });
+  }
+  children(selector, tabId = "default") {
+    return this.client.send("find.children", { selector, tabId });
+  }
+  parent(selector, tabId = "default") {
+    return this.client.send("find.parent", { selector, tabId });
+  }
+  closest(selector, ancestor, tabId = "default") {
+    return this.client.send("find.closest", { selector, ancestor, tabId });
+  }
+  count(selector, tabId = "default") {
+    return this.client.send("find.count", { selector, tabId });
+  }
+  exists(selector, tabId = "default") {
+    return this.client.send("find.exists", { selector, tabId });
+  }
+  visible(selector, tabId = "default") {
+    return this.client.send("find.visible", { selector, tabId });
+  }
+  enabled(selector, tabId = "default") {
+    return this.client.send("find.enabled", { selector, tabId });
+  }
+  checked(selector, tabId = "default") {
+    return this.client.send("find.checked", { selector, tabId });
+  }
+}
+function createFindAPI(client) {
+  return new FindClient(client);
+}
+
+// piggy/provide/index.ts
+class ProvideClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  text(opts, tabId = "default") {
+    return this.client.send("provide.text", { ...opts, tabId });
+  }
+  textAll(opts, tabId = "default") {
+    return this.client.send("provide.textAll", { ...opts, tabId });
+  }
+  attr(opts, tabId = "default") {
+    return this.client.send("provide.attr", { ...opts, tabId });
+  }
+  attrAll(opts, tabId = "default") {
+    return this.client.send("provide.attrAll", { ...opts, tabId });
+  }
+  html(opts, tabId = "default") {
+    return this.client.send("provide.html", { ...opts, tabId });
+  }
+  table(opts, tabId = "default") {
+    return this.client.send("provide.table", { ...opts, tabId });
+  }
+  list(opts, tabId = "default") {
+    return this.client.send("provide.list", { ...opts, tabId });
+  }
+  links(opts, tabId = "default") {
+    return this.client.send("provide.links", { ...opts, tabId });
+  }
+  images(opts, tabId = "default") {
+    return this.client.send("provide.images", { ...opts, tabId });
+  }
+  form(opts, tabId = "default") {
+    return this.client.send("provide.form", { ...opts, tabId });
+  }
+  page(tabId = "default") {
+    return this.client.send("provide.page", { tabId });
+  }
+  div(opts, tabId = "default") {
+    return this.client.send("provide.div", { ...opts, tabId });
+  }
+  meta(tabId = "default") {
+    return this.client.send("provide.meta", { tabId });
+  }
+  select(opts, tabId = "default") {
+    return this.client.send("provide.select", { ...opts, tabId });
+  }
+  json(opts, tabId = "default") {
+    return this.client.send("provide.json", { ...opts, tabId });
+  }
+}
+function createProvideAPI(client) {
+  return new ProvideClient(client);
+}
+
+// piggy/session/index.ts
+class SessionClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  reload(tabId = "default") {
+    return this.client.send("session.reload", { tabId });
+  }
+  paths() {
+    return this.client.send("session.paths", {});
+  }
+  cookiesPath() {
+    return this.client.send("session.cookies.path", {});
+  }
+  profilePath() {
+    return this.client.send("session.profile.path", {});
+  }
+  wsPath() {
+    return this.client.send("session.ws.path", {});
+  }
+  pingsPath() {
+    return this.client.send("session.pings.path", {});
+  }
+  setWsSave(enabled) {
+    return this.client.send("session.ws.save", { enabled });
+  }
+  setPingsSave(enabled) {
+    return this.client.send("session.pings.save", { enabled });
+  }
+  async export(tabId = "default") {
+    const raw = await this.client.send("session.export", { tabId });
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  }
+  import(data, tabId = "default") {
+    return this.client.send("session.import", {
+      data: JSON.stringify(data),
+      tabId
+    });
+  }
+  setCookie(opts, tabId = "default") {
+    return this.client.send("cookie.set", { ...opts, tabId });
+  }
+  deleteCookie(opts, tabId = "default") {
+    return this.client.send("cookie.delete", { ...opts, tabId });
+  }
+}
+function createSessionAPI(client) {
+  return new SessionClient(client);
+}
+
+// piggy/dialog/index.ts
+class DialogClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  accept(tabId = "default", text) {
+    return this.client.send("dialog.accept", { tabId, ...text !== undefined ? { text } : {} });
+  }
+  dismiss(tabId = "default") {
+    return this.client.send("dialog.dismiss", { tabId });
+  }
+  status(tabId = "default") {
+    return this.client.send("dialog.status", { tabId });
+  }
+  setAutoAction(tabId = "default", action) {
+    return this.client.send("dialog.onDialog", { tabId, action });
+  }
+  upload(selector, filePath, tabId = "default") {
+    return this.client.send("upload", { selector, path: filePath, tabId });
+  }
+  onDialog(tabId, handler) {
+    return this.client.onEvent("dialog", tabId, handler);
+  }
+  waitAndAccept(tabId = "default", text, timeoutMs = 30000) {
+    return new Promise((resolve2, reject) => {
+      const timer = setTimeout(() => {
+        unsub();
+        reject(new Error(`dialog.waitAndAccept: timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const unsub = this.onDialog(tabId, async (data) => {
+        clearTimeout(timer);
+        unsub();
+        await this.accept(tabId, text);
+        resolve2(data);
+      });
+    });
+  }
+  waitAndDismiss(tabId = "default", timeoutMs = 30000) {
+    return new Promise((resolve2, reject) => {
+      const timer = setTimeout(() => {
+        unsub();
+        reject(new Error(`dialog.waitAndDismiss: timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const unsub = this.onDialog(tabId, async (data) => {
+        clearTimeout(timer);
+        unsub();
+        await this.dismiss(tabId);
+        resolve2(data);
+      });
+    });
+  }
+}
+
+// piggy/iframe/index.ts
+class IframeClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  list(tabId = "default") {
+    return this.client.send("iframe.list", { tabId });
+  }
+  evaluate(opts, tabId = "default") {
+    return this.client.send("iframe.evaluate", { ...opts, tabId });
+  }
+  click(opts, tabId = "default") {
+    return this.client.send("iframe.click", { ...opts, tabId });
+  }
+  type(opts, tabId = "default") {
+    return this.client.send("iframe.type", { ...opts, tabId });
+  }
+  text(opts, tabId = "default") {
+    return this.client.send("iframe.text", { ...opts, tabId });
+  }
+  html(opts, tabId = "default") {
+    return this.client.send("iframe.html", { ...opts, tabId });
+  }
+  waitSel(opts, tabId = "default") {
+    return this.client.send("iframe.waitSel", { ...opts, tabId });
+  }
+}
+function createIframeAPI(client) {
+  return new IframeClient(client);
+}
+
+// piggy/expose/index.ts
+async function exposeFunction(client, fnName, handler, tabId) {
+  await client.exposeFunction(fnName, handler, tabId);
+  logger_default.success(`[${tabId}] exposed function: ${fnName}`);
+}
+async function unexposeFunction(client, fnName, tabId) {
+  await client.unexposeFunction(fnName, tabId);
+  logger_default.info(`[${tabId}] unexposed function: ${fnName}`);
+}
+async function clearExposedFunctions(client, tabId) {
+  await client.clearExposedFunctions(tabId);
+  logger_default.info(`[${tabId}] cleared all exposed functions`);
+}
+async function exposeAndInject(client, fnName, handler, injectionJs, tabId) {
+  await client.exposeFunction(fnName, handler, tabId);
+  const js = typeof injectionJs === "function" ? injectionJs(fnName) : injectionJs;
+  await client.evaluate(js, tabId);
+  logger_default.success(`[${tabId}] exposed and injected: ${fnName}`);
+}
+
+// piggy/captcha/index.ts
+class CaptchaClient {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  status(tabId = "default") {
+    return this.client.send("captcha.status", { tabId });
+  }
+  resolve(tabId = "default") {
+    return this.client.send("captcha.resolve", { tabId });
+  }
+  pause(tabId = "default") {
+    return this.client.send("captcha.pause", { tabId });
+  }
+  check(tabId = "default") {
+    return this.client.send("captcha.check", { tabId });
+  }
+  setAutoRetry(enabled) {
+    return this.client.send("captcha.autoRetry", { enabled });
+  }
+  blockStatus(tabId = "default") {
+    return this.client.send("block.status", { tabId });
+  }
+  blockRetry(tabId = "default") {
+    return this.client.send("block.retry", { tabId });
+  }
+  onCaptcha(tabId, handler) {
+    return this.client.onEvent("captcha", tabId, handler);
+  }
+  onCaptchaResolved(tabId, handler) {
+    return this.client.onEvent("captcha:resolved", tabId, handler);
+  }
+  onBlocked(tabId, handler) {
+    return this.client.onEvent("blocked", tabId, handler);
+  }
+  onBlockRetry(tabId, handler) {
+    return this.client.onEvent("block:retry", tabId, handler);
+  }
+  waitForResolution(tabId = "default", timeoutMs = 300000) {
+    return new Promise((resolve2, reject) => {
+      const timer = setTimeout(() => {
+        unsub();
+        reject(new Error(`captcha.waitForResolution: timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      const unsub = this.onCaptchaResolved(tabId, () => {
+        clearTimeout(timer);
+        unsub();
+        resolve2();
+      });
+      logger_default.warn(`[captcha] waiting for manual resolution on tab ${tabId}…`);
+    });
+  }
+}
+function createCaptchaAPI(client) {
+  return new CaptchaClient(client);
+}
+
 // piggy/register/index.ts
 var globalClient = null;
 var humanMode = false;
@@ -22977,6 +23310,10 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
       logger_default.debug(`[${name}] waitForSelector: ${selector}`);
       return client.waitForSelector(selector, timeout, t2);
     }),
+    exposeFunction: (fnName, handler) => exposeFunction(client, fnName, handler, tabId).then(() => site),
+    unexposeFunction: (fnName) => unexposeFunction(client, fnName, tabId).then(() => site),
+    clearExposedFunctions: () => clearExposedFunctions(client, tabId).then(() => site),
+    exposeAndInject: (fnName, handler, injectionJs) => exposeAndInject(client, fnName, handler, injectionJs, tabId).then(() => site),
     waitForVisible: (selector, timeout = 30000) => withTab((t2) => client.waitForSelector(selector, timeout, t2)),
     waitForResponse: (pattern, timeout = 30000) => withTab((t2) => client.waitForResponse(pattern, timeout, t2)),
     addInitScript: async (js) => {
@@ -23086,6 +23423,68 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
       css: (query) => withTab((t2) => client.searchCss(query, t2)),
       id: (query) => withTab((t2) => client.searchId(query, t2))
     },
+    captcha: {
+      status: () => withTab((t2) => createCaptchaAPI(client).status(t2)),
+      resolve: () => withTab((t2) => createCaptchaAPI(client).resolve(t2)),
+      pause: () => withTab((t2) => createCaptchaAPI(client).pause(t2)),
+      check: () => withTab((t2) => createCaptchaAPI(client).check(t2)),
+      autoRetry: (opts) => withTab((t2) => createCaptchaAPI(client).setAutoRetry(opts.enabled)),
+      onCaptcha: (handler) => createCaptchaAPI(client).onCaptcha(tabId, handler),
+      onResolved: (handler) => createCaptchaAPI(client).onCaptchaResolved(tabId, handler)
+    },
+    block: {
+      status: () => withTab((t2) => createCaptchaAPI(client).blockStatus(t2)),
+      retry: () => withTab((t2) => createCaptchaAPI(client).blockRetry(t2)),
+      onBlocked: (handler) => createCaptchaAPI(client).onBlocked(tabId, handler),
+      onRetry: (handler) => createCaptchaAPI(client).onBlockRetry(tabId, handler)
+    },
+    find: {
+      css: (selector) => withTab((t2) => {
+        console.log("[DEBUG] find.css tabId:", t2);
+        return createFindAPI(client).css(selector, t2);
+      }),
+      all: (selector) => withTab((t2) => createFindAPI(client).all(selector, t2)),
+      first: (selector) => withTab((t2) => createFindAPI(client).first(selector, t2)),
+      byText: (text) => withTab((t2) => createFindAPI(client).byText(text, t2)),
+      byAttr: (attr, value) => withTab((t2) => createFindAPI(client).byAttr(attr, value, t2)),
+      byTag: (tag) => withTab((t2) => createFindAPI(client).byTag(tag, t2)),
+      byPlaceholder: (text) => withTab((t2) => createFindAPI(client).byPlaceholder(text, t2)),
+      byRole: (role, name2) => withTab((t2) => createFindAPI(client).byRole(role, name2, t2)),
+      children: (selector) => withTab((t2) => createFindAPI(client).children(selector, t2)),
+      parent: (selector) => withTab((t2) => createFindAPI(client).parent(selector, t2)),
+      closest: (selector, ancestor) => withTab((t2) => createFindAPI(client).closest(selector, ancestor, t2)),
+      count: (selector) => withTab((t2) => createFindAPI(client).count(selector, t2)),
+      exists: (selector) => withTab((t2) => createFindAPI(client).exists(selector, t2)),
+      visible: (selector) => withTab((t2) => createFindAPI(client).visible(selector, t2)),
+      enabled: (selector) => withTab((t2) => createFindAPI(client).enabled(selector, t2)),
+      checked: (selector) => withTab((t2) => createFindAPI(client).checked(selector, t2))
+    },
+    provide: {
+      text: (opts) => withTab((t2) => createProvideAPI(client).text(opts, t2)),
+      textAll: (opts) => withTab((t2) => createProvideAPI(client).textAll(opts, t2)),
+      attr: (opts) => withTab((t2) => createProvideAPI(client).attr(opts, t2)),
+      attrAll: (opts) => withTab((t2) => createProvideAPI(client).attrAll(opts, t2)),
+      html: (opts) => withTab((t2) => createProvideAPI(client).html(opts, t2)),
+      table: (opts) => withTab((t2) => createProvideAPI(client).table(opts, t2)),
+      list: (opts) => withTab((t2) => createProvideAPI(client).list(opts, t2)),
+      links: (opts) => withTab((t2) => createProvideAPI(client).links(opts, t2)),
+      images: (opts) => withTab((t2) => createProvideAPI(client).images(opts, t2)),
+      form: (opts) => withTab((t2) => createProvideAPI(client).form(opts, t2)),
+      page: () => withTab((t2) => createProvideAPI(client).page(t2)),
+      div: (opts) => withTab((t2) => createProvideAPI(client).div(opts, t2)),
+      meta: () => withTab((t2) => createProvideAPI(client).meta(t2)),
+      select: (opts) => withTab((t2) => createProvideAPI(client).select(opts, t2)),
+      json: (opts) => withTab((t2) => createProvideAPI(client).json(opts, t2))
+    },
+    iframe: {
+      list: () => withTab((t2) => createIframeAPI(client).list(t2)),
+      evaluate: (opts) => withTab((t2) => createIframeAPI(client).evaluate(opts, t2)),
+      click: (opts) => withTab((t2) => createIframeAPI(client).click(opts, t2)),
+      type: (opts) => withTab((t2) => createIframeAPI(client).type(opts, t2)),
+      text: (opts) => withTab((t2) => createIframeAPI(client).text(opts, t2)),
+      html: (opts) => withTab((t2) => createIframeAPI(client).html(opts, t2)),
+      waitSel: (opts) => withTab((t2) => createIframeAPI(client).waitSel(opts, t2))
+    },
     screenshot: async (filePath) => {
       const r = await withTab((t2) => client.screenshot(filePath, t2));
       logger_default.success(`[${name}] screenshot → ${filePath ?? "base64"}`);
@@ -23095,6 +23494,12 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
       const r = await withTab((t2) => client.pdf(filePath, t2));
       logger_default.success(`[${name}] pdf → ${filePath ?? "base64"}`);
       return r;
+    },
+    human: {
+      set: (opts) => withTab((t2) => createHumanAPI(client).set(opts, t2)),
+      get: () => withTab((t2) => createHumanAPI(client).get(t2)),
+      type: (opts) => withTab((t2) => createHumanAPI(client).type(opts, t2)),
+      click: (opts) => withTab((t2) => createHumanAPI(client).click(opts, t2))
     },
     blockImages: () => withTab(async (t2) => {
       await client.blockImages(t2);
@@ -23109,12 +23514,13 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
         await withTab((t2) => client.setCookie(cookieName, value, domain, path, t2));
         logger_default.info(`[${name}] cookie set: ${cookieName} @ ${domain}`);
       },
-      get: (cookieName) => withTab((t2) => client.getCookie(cookieName, t2)),
-      delete: async (cookieName) => {
-        await withTab((t2) => client.deleteCookie(cookieName, t2));
+      get: (cookieName, domain = "") => withTab((t2) => client.getCookie(cookieName, domain, t2)),
+      delete: async (cookieName, domain) => {
+        const d = domain ?? new URL(registeredUrl).hostname;
+        await withTab((t2) => client.deleteCookie(cookieName, d, t2));
         logger_default.info(`[${name}] cookie deleted: ${cookieName}`);
       },
-      list: () => withTab((t2) => client.listCookies(t2))
+      list: (domain = "") => withTab((t2) => client.listCookies(domain, t2))
     },
     intercept: {
       block: async (pattern) => {
@@ -23201,6 +23607,16 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
         logger_default.info(`[${name}] intercept rules cleared`);
       }
     },
+    dialog: {
+      accept: (tabId2 = "default", text) => new DialogClient(client).accept(tabId2, text),
+      dismiss: (tabId2 = "default") => new DialogClient(client).dismiss(tabId2),
+      status: (tabId2 = "default") => new DialogClient(client).status(tabId2),
+      setAutoAction: (tabId2 = "default", action) => new DialogClient(client).setAutoAction(tabId2, action),
+      upload: (selector, filePath, tabId2 = "default") => new DialogClient(client).upload(selector, filePath, tabId2),
+      onDialog: (tabId2, handler) => new DialogClient(client).onDialog(tabId2, handler),
+      waitAndAccept: (tabId2 = "default", text, timeoutMs = 30000) => new DialogClient(client).waitAndAccept(tabId2, text, timeoutMs),
+      waitAndDismiss: (tabId2 = "default", timeoutMs = 30000) => new DialogClient(client).waitAndDismiss(tabId2, timeoutMs)
+    },
     capture: {
       start: () => withTab(async (t2) => {
         await client.captureStart(t2);
@@ -23220,37 +23636,14 @@ function createSiteObject(name, registeredUrl, client, tabId, pool) {
       })
     },
     session: {
-      export: async () => {
-        const data = await withTab((t2) => client.sessionExport(t2));
-        logger_default.success(`[${name}] session exported`);
-        return data;
-      },
-      import: async (data) => {
-        await withTab((t2) => client.sessionImport(data, t2));
-        logger_default.success(`[${name}] session imported`);
-      }
-    },
-    exposeFunction: async (fnName, handler) => {
-      await client.exposeFunction(fnName, handler, tabId);
-      logger_default.success(`[${name}] exposed function: ${fnName}`);
-      return site;
-    },
-    unexposeFunction: async (fnName) => {
-      await client.unexposeFunction(fnName, tabId);
-      logger_default.info(`[${name}] unexposed function: ${fnName}`);
-      return site;
-    },
-    clearExposedFunctions: async () => {
-      await client.clearExposedFunctions(tabId);
-      logger_default.info(`[${name}] cleared all exposed functions`);
-      return site;
-    },
-    exposeAndInject: async (fnName, handler, injectionJs) => {
-      await client.exposeFunction(fnName, handler, tabId);
-      const js = typeof injectionJs === "function" ? injectionJs(fnName) : injectionJs;
-      await withTab((t2) => client.evaluate(js, t2));
-      logger_default.success(`[${name}] exposed and injected: ${fnName}`);
-      return site;
+      export: () => withTab((t2) => createSessionAPI(client).export(t2)),
+      import: (data) => withTab((t2) => createSessionAPI(client).import(data, t2)),
+      reload: () => withTab((t2) => createSessionAPI(client).reload(t2)),
+      paths: () => createSessionAPI(client).paths(),
+      cookies: { path: () => createSessionAPI(client).cookiesPath() },
+      profile: { path: () => createSessionAPI(client).profilePath() },
+      ws: { save: (opts) => createSessionAPI(client).setWsSave(opts.enabled) },
+      pings: { save: (opts) => createSessionAPI(client).setPingsSave(opts.enabled) }
     },
     store: async (data, schemaName) => {
       const target = schemaName ?? name;

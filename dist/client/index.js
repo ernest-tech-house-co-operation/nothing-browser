@@ -973,6 +973,24 @@ class PiggyClient {
         }
       }
     }
+    if (event.event === "dialog") {
+      const key = `dialog:${event.tabId ?? "default"}`;
+      const handlers = this.globalEventHandlers.get(key);
+      if (handlers) {
+        for (const h of handlers) {
+          try {
+            h({
+              dialogType: event.dialogType,
+              message: event.message,
+              defaultValue: event.defaultValue,
+              tabId: event.tabId
+            });
+          } catch (e) {
+            logger_default.error(`dialog handler error: ${e}`);
+          }
+        }
+      }
+    }
   }
   onEvent(eventName, tabId, handler) {
     const key = `${eventName}:${tabId}`;
@@ -1120,14 +1138,14 @@ class PiggyClient {
   async setCookie(name, value, domain, path = "/", tabId = "default") {
     await this.send("cookie.set", { name, value, domain, path, tabId });
   }
-  async getCookie(name, tabId = "default") {
-    return this.send("cookie.get", { name, tabId });
+  async getCookie(name, domain = "", tabId = "default") {
+    return this.send("cookie.get", { name, domain, tabId });
   }
-  async deleteCookie(name, tabId = "default") {
-    await this.send("cookie.delete", { name, tabId });
+  async deleteCookie(name, domain, tabId = "default") {
+    await this.send("cookie.delete", { name, domain, tabId });
   }
-  async listCookies(tabId = "default") {
-    return this.send("cookie.list", { tabId });
+  async listCookies(domain = "", tabId = "default") {
+    return this.send("cookie.list", { domain, tabId });
   }
   async addInterceptRule(action, pattern, options = {}, tabId = "default") {
     await this.send("intercept.rule.add", { action, pattern, ...options, tabId });
