@@ -1,5 +1,4 @@
-// piggy.ts
-//the main file
+// piggy.ts — patched: adds single:true + piggy.extend()
 import { detectBinary, type BinaryMode } from "./piggy/launch/detect";
 import { spawnBrowser, killBrowser, spawnBrowserOnSocket } from "./piggy/launch/spawn";
 import { PiggyClient } from "./piggy/client";
@@ -27,11 +26,18 @@ import logger from "./piggy/logger";
 
 type TabMode = "tab" | "process";
 
+// A plugin installer is an async function that receives a site and enriches it.
+type PluginInstaller = (site: SiteObject) => Promise<any>;
+
 let _client: PiggyClient | null = null;
 let _router: PiggyRouter | null = null;
 let _tabMode: TabMode = "tab";
 const _extraProcs: { socket: string; client: PiggyClient }[] = [];
 const _sites: Record<string, SiteObject> = {};
+
+// ── Single-site tracking for extend() ────────────────────────────────────────
+// Only one site may be registered with { single: true } at a time.
+let _singleSiteName: string | null = null;
 
 // ── Internal guard ────────────────────────────────────────────────────────────
 
@@ -74,37 +80,57 @@ const piggy: any = {
   },
 
   // ── HTTP client (port 2005 direct) ────────────────────────────────────────
-  // Use when you want to talk to the browser over HTTP without a socket client.
   http: (opts: HttpClientOptions) => createHttpClient(opts),
 
   // ── Register ──────────────────────────────────────────────────────────────
   register: async (
     name: string,
     url: string,
-    opts?: { binary?: BinaryMode; pool?: number }
+    opts?: { binary?: BinaryMode; pool?: number; single?: boolean }
   ) => {
     if (!url?.trim()) throw new Error(`No URL for site "${name}"`);
+
     const binaryMode: BinaryMode = opts?.binary ?? "headless";
-    const poolSize = opts?.pool ?? 0;
+    const poolSize   = opts?.pool ?? 0;
+    const isSingle   = opts?.single === true;
+
+    // ── single: true enforcement ───────────────────────────────────────────
+    // A single-site registration uses the default tab and blocks tab.new so
+    // the binary stays strictly single-tab. Only one site may be single.
+    if (isSingle && _singleSiteName && _singleSiteName !== name) {
+      throw new Error(
+        `piggy: site "${_singleSiteName}" is already registered as single. ` +
+        `Only one site may use { single: true } at a time.`
+      );
+    }
 
     if (_tabMode === "tab") {
       const client = guardClient();
 
       if (poolSize > 1) {
+        if (isSingle) throw new Error('piggy: { single: true } is incompatible with pool > 1');
         const pool = new TabPool(client, poolSize, url, name);
         await pool.init();
         const siteObj = createSiteObject(name, url, client, "default", pool);
         _sites[name] = siteObj;
-        piggy[name] = siteObj;
+        piggy[name]  = siteObj;
         logger.success(`[${name}] registered with pool of ${poolSize} tabs`);
       } else {
-        const tabId = await client.newTab();
+        // single: true  →  reuse the default tab, never call newTab()
+        const tabId = isSingle ? "default" : await client.newTab();
         const siteObj = createSiteObject(name, url, client, tabId);
         _sites[name] = siteObj;
-        piggy[name] = siteObj;
-        logger.success(`[${name}] registered as tab ${tabId}`);
+        piggy[name]  = siteObj;
+
+        if (isSingle) {
+          _singleSiteName = name;
+          logger.success(`[${name}] registered as single-tab site (default tab)`);
+        } else {
+          logger.success(`[${name}] registered as tab ${tabId}`);
+        }
       }
     } else {
+      if (isSingle) throw new Error('piggy: { single: true } is only supported in tab mode');
       const socketName = `piggy_${name}`;
       await spawnBrowserOnSocket(socketName, binaryMode);
       await new Promise(r => setTimeout(r, 500));
@@ -113,17 +139,56 @@ const piggy: any = {
       _extraProcs.push({ socket: socketName, client: c });
       const siteObj = createSiteObject(name, url, c, "default");
       _sites[name] = siteObj;
-      piggy[name] = siteObj;
+      piggy[name]  = siteObj;
       logger.success(`[${name}] registered as process on "${socketName}"`);
     }
 
     return piggy;
   },
 
+  // ── extend() — installs plugins onto the single-flagged site ─────────────
+  //
+  // Each installer is an async function returned by a plugin factory, e.g.:
+  //   innerstorage({ path: './wa-storage.json' })   → installer fn
+  //
+  // Usage:
+  //   await piggy.extend(
+  //     innerstorage({ path: './wa-storage.json' }),
+  //     cookiesinject({ cookieFile: './wa-cookies.json' }),
+  //     mediacapture({ downloadDir: './wa-media/' })
+  //   );
+  extend: async (...installers: PluginInstaller[]) => {
+    if (!_singleSiteName) {
+      throw new Error(
+        'piggy.extend() requires a site registered with { single: true }.\n' +
+        'Example: await piggy.register("mysite", url, { single: true })'
+      );
+    }
+    if (installers.length === 0) {
+      logger.warn('[piggy] extend() called with no plugins — nothing to do');
+      return piggy;
+    }
+
+    const site = _sites[_singleSiteName];
+    if (!site) {
+      throw new Error(`piggy.extend(): site "${_singleSiteName}" not found — register it first`);
+    }
+
+    for (const installer of installers) {
+      if (typeof installer !== 'function') {
+        throw new Error('piggy.extend(): each argument must be a plugin installer function');
+      }
+      await installer(site);
+    }
+
+    logger.success(`[piggy] ${installers.length} plugin(s) installed on "${_singleSiteName}"`);
+    return piggy;
+  },
+
   // ── Sub-APIs (1:1 with C++ files, available after launch/connect) ─────────
 
-    get tabs()         { return _router?.tabs         ?? createTabsAPI(guardClient()); },
-    get tab()         { return _router?.tabs         ?? createTabsAPI(guardClient()); },
+  get tabs()         { return _router?.tabs         ?? createTabsAPI(guardClient()); },
+  get tab()          { return _router?.tabs         ?? createTabsAPI(guardClient()); },
   get navigation()   { return _router?.navigation   ?? createNavigationAPI(guardClient()); },
   get interactions() { return _router?.interactions ?? createInteractionsAPI(guardClient()); },
   get media()        { return _router?.media        ?? createMediaAPI(guardClient()); },
@@ -146,7 +211,7 @@ const piggy: any = {
     return {
       load:     (path: string)                                              => api.load(path),
       fetch:    (url: string)                                               => api.fetch(url),
-      ovpn:     (path: string)                                              => api.ovpn(path),
+      ovpn:     (path: string)                                             => api.ovpn(path),
       set:      (opts: Parameters<typeof api.set>[0])                       => api.set(opts),
       test:     ()                                                          => api.test(),
       testStop: ()                                                          => api.testStop(),
@@ -160,7 +225,7 @@ const piggy: any = {
       rotation: (mode: "none" | "timed" | "perrequest", interval?: number) => api.rotation(mode, interval),
       config:   (opts: { skipDead?: boolean; autoCheck?: boolean })         => api.config(opts),
       save:     (path: string, filter?: "alive" | "dead" | "all")          => api.save(path, filter),
-      on:       (event: string, handler: (data: any) => void)              => guardClient().onProxyEvent(event, handler),
+      on:       (event: string, handler: (data: any) => void)               => guardClient().onProxyEvent(event, handler),
     };
   },
 
@@ -232,6 +297,7 @@ const piggy: any = {
   // ── Shutdown ──────────────────────────────────────────────────────────────
   close: async (opts?: { force?: boolean }) => {
     stopServer();
+    _singleSiteName = null;
     if (opts?.force) {
       for (const { client: c } of _extraProcs) c.disconnect();
       _client?.disconnect();
