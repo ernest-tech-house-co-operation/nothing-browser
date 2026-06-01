@@ -1,6 +1,6 @@
 {
   "name": "nothing-browser",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "Browser automation library powered by Nothing Browser",
   "homepage": "https://github.com/ernest-tech-house-co-operation/nothing-browser#readme",
   "repository": {
@@ -16,37 +16,28 @@
     "url": "https://github.com/ernest-tech-house-co-operation"
   },
   "license": "MIT",
-  "main": "./dist/piggy.js",
-  "types": "./dist/piggy.d.ts",
+  "main": "./piggy.js",
   "exports": {
     ".": {
-      "bun": "./piggy.ts",
-      "node": "./dist/piggy.js",
-      "default": "./dist/piggy.js",
-      "types": "./dist/piggy.d.ts"
+      "bun": "./piggy.js",
+      "node": "./piggy.js",
+      "default": "./piggy.js"
     },
     "./register": {
-      "bun": "./piggy/register/index.ts",
-      "node": "./dist/register/index.js",
-      "types": "./dist/register/index.d.ts"
+      "bun": "./piggy/register/index.js",
+      "node": "./piggy/register/index.js"
     },
     "./server": {
-      "bun": "./piggy/server/index.ts",
-      "node": "./dist/server/index.js",
-      "types": "./dist/server/index.d.ts"
+      "bun": "./piggy/server/index.js",
+      "node": "./piggy/server/index.js"
     },
     "./logger": {
-      "bun": "./piggy/logger/index.ts",
-      "node": "./dist/logger/index.js",
-      "types": "./dist/logger/index.d.ts"
+      "bun": "./piggy/logger/index.js",
+      "node": "./piggy/logger/index.js"
     }
   },
   "scripts": {
-    "clean": "rm -rf dist",
-    "build:types": "tsc --project tsconfig.json --emitDeclarationOnly --outDir dist",
-    "build:js": "bun build ./piggy.ts --outdir ./dist --target node && bun build ./piggy/client/index.ts --outdir ./dist/client --target node && bun build ./piggy/register/index.ts --outdir ./dist/register --target node && bun build ./piggy/server/index.ts --outdir ./dist/server --target node && bun build ./piggy/logger/index.ts --outdir ./dist/logger --target node && bun build ./piggy/launch/detect.ts --outdir ./dist/launch --target node && bun build ./piggy/launch/spawn.ts --outdir ./dist/launch --target node && bun build ./piggy/cache/memory.ts --outdir ./dist/cache --target node && bun build ./piggy/human/index.ts --outdir ./dist/human --target node",
-    "build": "bun run clean && bun run build:types && bun run build:js",
-    "prepublishOnly": "bun run build"
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@elysiajs/openapi": "^1.4.15",
@@ -58,17 +49,14 @@
     "elysia": "^1.0.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "bun-types": "latest",
-    "typescript": "^6.0.3"
+    "@types/node": "^20.0.0"
   },
   "engines": {
     "node": ">=18.0.0",
     "bun": ">=1.0.0"
   },
   "files": [
-    "dist",
-    "piggy.ts",
+    "piggy.js",
     "piggy",
     "README.md",
     "nothing_browser_pig_pink.svg"
