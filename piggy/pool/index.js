@@ -1,6 +1,6 @@
 // piggy/pool/index.js
-import { PiggyClient } from "../client.js";
-import logger from "../logger.js";
+import { PiggyClient } from "../client/index.js";
+import logger from "../logger/index.js";
 
 export class TabPool {
   #idle = [];

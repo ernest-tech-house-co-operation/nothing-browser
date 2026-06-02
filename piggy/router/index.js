@@ -3,7 +3,7 @@
 // This is the single entry point that composes all sub-clients
 // into one object — the same way the C++ router dispatches to sub-handlers.
 
-import { PiggyClient } from "../client.js";
+import { PiggyClient } from "../client/index.js";
 import { createCaptureAPI } from "../capture/index.js";
 import { createCaptchaAPI } from "../captcha/index.js";
 import { createDialogAPI } from "../dialog/index.js";

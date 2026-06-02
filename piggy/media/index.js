@@ -1,5 +1,5 @@
 // piggy/media/index.js
-import { PiggyClient } from "../client.js";
+import { PiggyClient } from "../client/index.js";
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 

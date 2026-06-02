@@ -1,33 +1,34 @@
 'use strict';
 
-const { detectBinary }                          = require("./piggy/launch/detect");
+const { detectBinary }                          = require("./piggy/launch/detect.js");
 const { spawnBrowser, killBrowser,
-        spawnBrowserOnSocket }                  = require("./piggy/launch/spawn");
-const { PiggyClient }                           = require("./piggy/client");
+        spawnBrowserOnSocket }                  = require("./piggy/launch/spawn.js");
+const { PiggyClient }                           = require("./piggy/client/index.js");
 const { setClient, setHumanMode,
-        createSiteObject }                      = require("./piggy/register");
+        createSiteObject }                      = require("./piggy/register/index.js");
 const { routeRegistry, keepAliveSites,
-        startServer, stopServer }               = require("./piggy/server");
-const { TabPool }                               = require("./piggy/pool");
-const { createRouter }                          = require("./piggy/router");
-const { createCaptureAPI }                      = require("./piggy/capture");
-const { createCaptchaAPI }                      = require("./piggy/captcha");
-const { createDialogAPI }                       = require("./piggy/dialog");
-const { createExportAPI }                       = require("./piggy/export");
-const { createFindAPI }                         = require("./piggy/find");
-const { createHumanAPI }                        = require("./piggy/human");
-const { createIframeAPI }                       = require("./piggy/iframe");
-const { createInteractionsAPI }                 = require("./piggy/interactions");
-const { createMediaAPI }                        = require("./piggy/media");
-const { createNavigationAPI }                   = require("./piggy/navigation");
-const { createProvideAPI }                      = require("./piggy/provide");
-const { createProxyAPI }                        = require("./piggy/proxy");
-const { createSessionAPI }                      = require("./piggy/session");
-const { createTabsAPI }                         = require("./piggy/tabs");
+        startServer, stopServer }               = require("./piggy/server/index.js");
+const { TabPool }                               = require("./piggy/pool/index.js");
+const { createRouter }                          = require("./piggy/router/index.js");
+const { createCaptureAPI }                      = require("./piggy/capture/index.js");
+const { createCaptchaAPI }                      = require("./piggy/captcha/index.js");
+const { createDialogAPI }                       = require("./piggy/dialog/index.js");
+const { createExportAPI }                       = require("./piggy/export/index.js");
+const { createFindAPI }                         = require("./piggy/find/index.js");
+const { createHumanAPI }                        = require("./piggy/human/index.js");
+const { createIframeAPI }                       = require("./piggy/iframe/index.js");
+const { createInteractionsAPI }                 = require("./piggy/interactions/index.js");
+const { createMediaAPI }                        = require("./piggy/media/index.js");
+const { createNavigationAPI }                   = require("./piggy/navigation/index.js");
+const { createProvideAPI }                      = require("./piggy/provide/index.js");
+const { createProxyAPI }                        = require("./piggy/proxy/index.js");
+const { createSessionAPI }                      = require("./piggy/session/index.js");
+const { createTabsAPI }                         = require("./piggy/tabs/index.js");
 const { createWaitAPI, createEvaluateAPI,
-        createFetchAPI }                        = require("./piggy/wait");
-const { createHttpClient }                      = require("./piggy/http");
-const logger                                    = require("./piggy/logger");
+        createFetchAPI }                        = require("./piggy/wait/index.js");
+const { createHttpClient }                      = require("./piggy/http/index.js");
+const _loggerMod                                = require("./piggy/logger/index.js");
+const logger                                    = _loggerMod.default ?? _loggerMod;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 

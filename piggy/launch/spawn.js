@@ -2,7 +2,7 @@ import { spawn as nodeSpawn } from "child_process";
 import { execSync } from "child_process";
 import { platform } from "os";
 import { detectBinary } from "./detect.js";
-import logger from "../logger.js";
+import logger from "../logger/index.js";
 
 let activeProcess = null;
 const extraProcesses = [];

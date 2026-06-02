@@ -1,7 +1,7 @@
 
 import { existsSync } from 'fs';
 import { join } from 'path';
-import logger from '../logger.js';
+import logger from '../logger/index.js';
 
 const BINARY_NAMES = {
   headless: 'nothing-browser-headless',

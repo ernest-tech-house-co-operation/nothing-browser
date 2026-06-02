@@ -1,19 +1,19 @@
 // piggy/register/index.ts  →  stripped to JS
-import { PiggyClient } from "../client";
-import { HumanClient } from "../human";
-import logger from "../logger";
-import { routeRegistry, keepAliveSites } from "../server";
-import { buildRespondScript, buildModifyResponseScript } from "../intercept/scripts";
-import { storeRecord } from "../store";
-import { TabPool } from "../pool";
-import { createFindAPI } from "../find";
-import { createProvideAPI } from "../provide";
-import { createHumanAPI } from "../human";
-import { createSessionAPI } from "../session";
-import { DialogClient } from "../dialog";
-import { createIframeAPI } from "../iframe";
-import { exposeFunction, unexposeFunction, clearExposedFunctions, exposeAndInject } from "../expose";
-import { createCaptchaAPI } from "../captcha";
+import { PiggyClient } from "../client/index.js";
+import { HumanClient } from "../human/index.js";
+import logger from "../logger/index.js";
+import { routeRegistry, keepAliveSites } from "../server/index.js";
+import { buildRespondScript, buildModifyResponseScript } from "../intercept/scripts.js";
+import { storeRecord } from "../store/index.js";
+import { TabPool } from "../pool/index.js";
+import { createFindAPI } from "../find/index.js";
+import { createProvideAPI } from "../provide/index.js";
+import { createHumanAPI } from "../human/index.js";
+import { createSessionAPI } from "../session/index.js";
+import { DialogClient } from "../dialog/index.js";
+import { createIframeAPI } from "../iframe/index.js";
+import { exposeFunction, unexposeFunction, clearExposedFunctions, exposeAndInject } from "../expose/index.js";
+import { createCaptchaAPI } from "../captcha/index.js";
 
 let globalClient = null;
 export let humanMode = false;

@@ -1,5 +1,5 @@
 // piggy/human/index.js
-import { PiggyClient } from "../client.js";
+import { PiggyClient } from "../client/index.js";
 
 // ─── Local utilities ──────────────────────────────────────────────────────────
 

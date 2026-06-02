@@ -1,5 +1,5 @@
 // piggy/session/index.js
-import { PiggyClient } from "../client.js";
+import { PiggyClient } from "../client/index.js";
 
 export class SessionClient {
   constructor(client) {

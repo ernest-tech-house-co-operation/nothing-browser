@@ -1,5 +1,5 @@
 // piggy/export/index.js
-import { PiggyClient } from "../client.js";
+import { PiggyClient } from "../client/index.js";
 
 // ─── ExportClient ─────────────────────────────────────────────────────────────
 export class ExportClient {

@@ -3,7 +3,7 @@ import { connect } from "net";
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import { platform } from "os";
-import logger from "../logger";
+import logger from "../logger/index.js";
 
 const DEFAULT_SOCKET_PATH = platform() === "win32"
   ? "\\\\.\\pipe\\piggy"

@@ -1,7 +1,7 @@
 // piggy/store/index.js
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname, resolve } from "path";
-import logger from "../logger.js";
+import logger from "../logger/index.js";
 
 // ── Load piggy.store.json ─────────────────────────────────────────────────────
 

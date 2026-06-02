@@ -1,5 +1,5 @@
 // piggy/iframe/index.js
-import { PiggyClient } from "../client.js";
+import { PiggyClient } from "../client/index.js";
 
 // ─── IframeClient ─────────────────────────────────────────────────────────────
 

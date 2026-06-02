@@ -1,5 +1,5 @@
 // piggy/provide/index.js
-import { PiggyClient } from "../client.js";
+import { PiggyClient } from "../client/index.js";
 
 // ─── ProvideClient ────────────────────────────────────────────────────────────
 // provide answers ONE question: "give me the actual value from this element."

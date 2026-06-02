@@ -2,7 +2,7 @@
 import { Elysia } from "elysia";
 import { openapi } from "@elysiajs/openapi";
 import * as cache from "../cache/memory.js";
-import logger from "../logger.js";
+import logger from "../logger/index.js";
 
 export const routeRegistry = new Map();
 export const keepAliveSites = new Set();

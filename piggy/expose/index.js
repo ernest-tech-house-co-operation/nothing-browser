@@ -1,5 +1,5 @@
-import { PiggyClient } from "../client.js";
-import logger from "../logger.js";
+import { PiggyClient } from "../client/index.js";
+import logger from "../logger/index.js";
 
 export async function exposeFunction(client, fnName, handler, tabId) {
   await client.exposeFunction(fnName, handler, tabId);

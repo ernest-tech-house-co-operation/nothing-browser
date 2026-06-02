@@ -1,5 +1,5 @@
 // piggy/proxy/index.js
-import { PiggyClient } from "../client.js";
+import { PiggyClient } from "../client/index.js";
 
 export class ProxyClient {
   constructor(client) {

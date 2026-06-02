@@ -1,5 +1,5 @@
 // piggy/find/index.js
-import { PiggyClient } from "../client.js";
+import { PiggyClient } from "../client/index.js";
 
 // ─── FindClient ───────────────────────────────────────────────────────────────
 // find answers ONE question: "is this thing here, and where?"
