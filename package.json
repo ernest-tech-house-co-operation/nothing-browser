@@ -1,73 +1,37 @@
 {
   "name": "nothing-browser",
-  "version": "0.1.11",
-  "description": "Browser automation library powered by Nothing Browser",
-  "homepage": "https://github.com/ernest-tech-house-co-operation/nothing-browser#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ernest-tech-house-co-operation/nothing-browser.git"
-  },
-  "bugs": {
-    "url": "https://github.com/ernest-tech-house-co-operation/nothing-browser/issues"
-  },
-  "author": {
-    "name": "Pease Ernest",
-    "email": "pease@ernest.com",
-    "url": "https://github.com/ernest-tech-house-co-operation"
-  },
-  "license": "MIT",
-  "main": "./piggy.js",
+  "version": "0.0.20",
+  "description": "Headless browser automation library for the Nothing Browser binary. Dot-notation API over a C++ Qt6 backend.",
+  "main": "src/piggy.js",
   "exports": {
     ".": {
-      "bun": "./piggy.js",
-      "node": "./piggy.js",
-      "default": "./piggy.js"
-    },
-    "./register": {
-      "bun": "./piggy/register/index.js",
-      "node": "./piggy/register/index.js"
-    },
-    "./server": {
-      "bun": "./piggy/server/index.js",
-      "node": "./piggy/server/index.js"
-    },
-    "./logger": {
-      "bun": "./piggy/logger/index.js",
-      "node": "./piggy/logger/index.js"
+      "require": "./src/piggy.js",
+      "import":  "./src/piggy.js",
+      "default": "./src/piggy.js"
     }
   },
-  "scripts": {
-    "clean": "rm -rf dist"
+  "keywords": [
+    "nothing-browser",
+    "piggy",
+    "headless",
+    "browser-automation",
+    "scraper",
+    "qt6",
+    "webscraping"
+  ],
+  "author": "Ernest Tech House",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BunElysiaReact/nothing-browser"
   },
-  "dependencies": {
-    "@elysiajs/openapi": "^1.4.15",
-    "better-sqlite3": "^12.9.0",
-    "elysia": "^1.0.0",
-    "ernest-logger": "2.0.4"
-  },
-  "peerDependencies": {
-    "elysia": "^1.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^20.0.0"
-  },
+  "homepage": "https://nothing-browser-docs.pages.dev/guide/piggy/",
+  "files": [
+    "src/",
+    "README.md"
+  ],
   "engines": {
     "node": ">=18.0.0",
-    "bun": ">=1.0.0"
-  },
-  "files": [
-    "piggy.js",
-    "piggy",
-    "README.md",
-    "nothing_browser_pig_pink.svg"
-  ],
-  "keywords": [
-    "browser",
-    "automation",
-    "headless",
-    "scraping",
-    "webdriver",
-    "chromium",
-    "nothing-browser"
-  ]
+    "bun":  ">=1.0.0"
+  }
 }

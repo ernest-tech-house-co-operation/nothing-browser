@@ -1,9 +1,0 @@
-src/
-tsconfig.json
-.git/
-.github/
-*.log
-.DS_Store
-node_modules/
-tests/
-examples/
