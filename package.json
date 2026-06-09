@@ -6,7 +6,7 @@
   "exports": {
     ".": {
       "require": "./src/piggy.js",
-      "import":  "./src/piggy.js",
+      "import": "./src/piggy.js",
       "default": "./src/piggy.js"
     }
   },
@@ -16,8 +16,7 @@
     "headless",
     "browser-automation",
     "scraper",
-    "qt6",
-    "webscraping"
+    "qt6"
   ],
   "author": "Ernest Tech House",
   "license": "MIT",
@@ -30,8 +29,11 @@
     "src/",
     "README.md"
   ],
+  "dependencies": {
+    "ernest-logger": "^2.0.4"
+  },
   "engines": {
     "node": ">=18.0.0",
-    "bun":  ">=1.0.0"
+    "bun": ">=1.0.0"
   }
 }

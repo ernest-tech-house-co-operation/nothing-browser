@@ -2,26 +2,19 @@
 
 const { EventEmitter } = require('events');
 
-/**
- * Builds the full site object from a tabId and client.
- * This is what piggy.mysite gives you — all the dot-notation APIs.
- */
 function createSite(name, url, tabId, client, piggyInstance) {
   const emitter = new EventEmitter();
 
   // Forward tab-specific events from the global client
-  client.on('qr',        (d) => { if (d.tabId === tabId) emitter.emit('qr', d); });
-  client.on('qr:scanned',(d) => { if (d.tabId === tabId) emitter.emit('qr:scanned', d); });
-  client.on('qr:timeout',(d) => { if (d.tabId === tabId) emitter.emit('qr:timeout', d); });
-  client.on('dialog',    (d) => { if (d.tabId === tabId) emitter.emit('dialog', d); });
-  client.on('captcha',   (d) => { if (d.tabId === tabId) emitter.emit('captcha', d); });
-  client.on('navigate',  (d) => { if (d.tabId === tabId) emitter.emit('navigate', d); });
-  client.on('proxy:changed',      (d) => emitter.emit('proxy:changed', d));
-  client.on('proxy:loaded',       (d) => emitter.emit('proxy:loaded', d));
-  client.on('proxy:fetch:failed', (d) => emitter.emit('proxy:fetch:failed', d));
-  client.on('storage:loaded',     (d) => { if (d.tabId === tabId) emitter.emit('storage:loaded', d); });
-  client.on('storage:saved',      (d) => { if (d.tabId === tabId) emitter.emit('storage:saved', d); });
-  client.on('exposed_call', (d)  => { if (d.tabId === tabId) emitter.emit('exposed_call', d); });
+  const tabEvents = ['qr', 'qr:scanned', 'qr:timeout', 'dialog', 'captcha',
+    'captcha:resolved', 'blocked', 'navigate', 'storage:loaded', 'storage:saved'];
+  tabEvents.forEach(ev => {
+    client.on(ev, (d) => { if (d.tabId === tabId) emitter.emit(ev, d.url ?? d); });
+  });
+  // proxy events are global (no tabId filter)
+  ['proxy:changed','proxy:loaded','proxy:fetch:failed','proxy:check:started',
+   'proxy:check:done','proxy:alive','proxy:dead','proxy:exhausted','proxy:ovpn:loaded',
+  ].forEach(ev => client.on(ev, d => emitter.emit(ev, d)));
 
   function send(cmd, payload = {}) {
     return client.send(cmd, { tabId, ...payload });
@@ -33,45 +26,51 @@ function createSite(name, url, tabId, client, piggyInstance) {
     _tabId: tabId,
     _send:  send,
 
-    // EventEmitter passthrough
-    on:            (...a) => emitter.on(...a),
-    once:          (...a) => emitter.once(...a),
-    off:           (...a) => emitter.off(...a),
-    emit:          (...a) => emitter.emit(...a),
+    // ── EventEmitter ─────────────────────────────────────────────────────────
+    on:   (...a) => { emitter.on(...a);   return site; },
+    once: (...a) => { emitter.once(...a); return site; },
+    off:  (...a) => { emitter.off(...a);  return site; },
+    emit: (...a) => emitter.emit(...a),
 
-    // ── Navigation ────────────────────────────────────────────────────────────
-    navigate(targetUrl)  { return send('navigate', { url: targetUrl ?? url }); },
-    reload()             { return send('reload'); },
-    goBack()             { return send('go.back'); },
-    goForward()          { return send('go.forward'); },
-    url()                { return send('page.url'); },
-    title()              { return send('page.title'); },
-    content()            { return send('page.content'); },
-    waitForNavigation()  { return send('wait.navigation'); },
-
-    // ── Waiting ───────────────────────────────────────────────────────────────
-    wait: {
-      selector(selector, opts = {}) {
-        return send('wait.selector', { selector, ...opts });
-      },
-      function(js, opts = {}) {
-        return send('wait.function', { js, ...opts });
-      },
-      response() {
-        return send('wait.response');
-      },
+    // ── Navigation ───────────────────────────────────────────────────────────
+    navigate(targetUrl)   { return send('navigate',        { url: targetUrl ?? url }); },
+    reload()              { return send('reload',          {}); },
+    goBack()              { return send('go.back',         {}); },
+    goForward()           { return send('go.forward',      {}); },
+    title()               { return send('page.title',      {}); },
+    url()                 { return send('page.url',        {}); },
+    content()             { return send('page.content',    {}); },
+    waitForNavigation()   { return send('wait.navigation', {}); },
+    waitForSelector(selector, timeout) {
+      return send('wait.selector', { selector, state: 'attached', timeout: timeout ?? 30000 });
     },
+    waitForResponse(pattern) { return send('wait.response', { pattern }); },
+    wait(ms)              { return new Promise(r => setTimeout(r, ms)); },
+    noclose()             { return send('noclose', {}); },
+    close()               { return send('tab.close', {}); },
+    poolStats()           { return send('tab.poolStats', {}); },
 
-    waitForResponse() { return send('wait.response'); },
+    // ── Wait ─────────────────────────────────────────────────────────────────
+    wait: Object.assign(
+      (ms) => new Promise(r => setTimeout(r, ms)),
+      {
+        selector({ selector, state = 'attached', timeout = 30000 }) {
+          return send('wait.selector', { selector, state, timeout });
+        },
+        function({ js, timeout = 30000 }) {
+          return send('wait.function', { js, timeout });
+        },
+        response(pattern) { return send('wait.response', { pattern }); },
+        navigation()      { return send('wait.navigation', {}); },
+      }
+    ),
 
-    // ── Interactions ──────────────────────────────────────────────────────────
-    click(selector)          { return send('click',    { selector }); },
-    dblclick(selector)       { return send('dblclick', { selector }); },
-    hover(selector)          { return send('hover',    { selector }); },
-    type(selector, text, opts = {}) {
-      return send('type', { selector, text, ...opts });
-    },
-    select(selector, value)  { return send('select',   { selector, value }); },
+    // ── Interactions ─────────────────────────────────────────────────────────
+    click(selector, opts = {})            { return send('click',    { selector, ...opts }); },
+    doubleClick(selector)                 { return send('dblclick', { selector }); },
+    hover(selector)                       { return send('hover',    { selector }); },
+    type(selector, text, opts = {})       { return send('type',     { selector, text, ...opts }); },
+    select(selector, value)               { return send('select',   { selector, value }); },
 
     scroll: {
       to(selector)  { return send('scroll.to', { selector }); },
@@ -84,190 +83,282 @@ function createSite(name, url, tabId, client, piggyInstance) {
     },
 
     mouse: {
-      move(x, y)             { return send('mouse.move', { x, y }); },
-      drag(from, to)         { return send('mouse.drag', { from, to }); },
+      move(x, y)         { return send('mouse.move', { x, y }); },
+      drag(from, to)     { return send('mouse.drag', { from, to }); },
     },
 
-    evaluate(js, opts = {})  { return send('evaluate', { js, ...opts }); },
+    evaluate(js, ...args) { return send('evaluate', { js, args }); },
 
     // ── Find ─────────────────────────────────────────────────────────────────
     find: {
-      css(selector)                     { return send('find.css',           { selector }); },
-      all(selector)                     { return send('find.all',           { selector }); },
-      first(selector)                   { return send('find.first',         { selector }); },
-      byText(text, opts = {})           { return send('find.byText',        { text, ...opts }); },
-      byAttr(attr, value, opts = {})    { return send('find.byAttr',        { attr, value, ...opts }); },
-      byTag(tag)                        { return send('find.byTag',         { tag }); },
-      byPlaceholder(text)               { return send('find.byPlaceholder', { text }); },
-      byRole(role, opts = {})           { return send('find.byRole',        { role, ...opts }); },
-      closest(selector, ancestor)       { return send('find.closest',       { selector, ancestor }); },
-      parent(selector)                  { return send('find.parent',        { selector }); },
-      children(selector)                { return send('find.children',      { selector }); },
-      filter(selector, attr, value)     { return send('find.filter',        { selector, attr, value }); },
-      count(selector)                   { return send('find.count',         { selector }); },
-      exists(selector)                  { return send('find.exists',        { selector }); },
-      visible(selector)                 { return send('find.visible',       { selector }); },
-      enabled(selector)                 { return send('find.enabled',       { selector }); },
-      checked(selector)                 { return send('find.checked',       { selector }); },
+      css(selector, _tabId)                  { return send('find.css',           { selector }); },
+      all(selector, _tabId)                  { return send('find.all',           { selector }); },
+      first(selector, _tabId)                { return send('find.first',         { selector }); },
+      byText(opts, _tabId)                   { return send('find.byText',        opts); },
+      byAttr(opts, _tabId)                   { return send('find.byAttr',        opts); },
+      byTag(tag, _tabId)                     { return send('find.byTag',         { tag }); },
+      byPlaceholder(text, _tabId)            { return send('find.byPlaceholder', { text }); },
+      byRole(opts, _tabId)                   { return send('find.byRole',        opts); },
+      closest(opts, _tabId)                  { return send('find.closest',       opts); },
+      parent(selector, _tabId)               { return send('find.parent',        { selector }); },
+      children(selector, _tabId)             { return send('find.children',      { selector }); },
+      filter(opts, _tabId)                   { return send('find.filter',        opts); },
+      count(selector, _tabId)                { return send('find.count',         { selector }); },
+      exists(selector, _tabId)               { return send('find.exists',        { selector }); },
+      visible(selector, _tabId)              { return send('find.visible',       { selector }); },
+      enabled(selector, _tabId)              { return send('find.enabled',       { selector }); },
+      checked(selector, _tabId)              { return send('find.checked',       { selector }); },
     },
 
-    // ── Provide ───────────────────────────────────────────────────────────────
+    // ── Provide ──────────────────────────────────────────────────────────────
     provide: {
-      text(selector)                    { return send('provide.text',     { selector }); },
-      textAll(selector)                 { return send('provide.textAll',  { selector }); },
-      attr(selector, attr)              { return send('provide.attr',     { selector, attr }); },
-      attrAll(selector, attr)           { return send('provide.attrAll',  { selector, attr }); },
-      html(selector)                    { return send('provide.html',     { selector }); },
-      table(selector)                   { return send('provide.table',    { selector }); },
-      list(selector, opts = {})         { return send('provide.list',     { selector, ...opts }); },
-      links(selector)                   { return send('provide.links',    { selector }); },
-      images(selector)                  { return send('provide.images',   { selector }); },
-      form(selector)                    { return send('provide.form',     { selector }); },
-      page()                            { return send('provide.page',     {}); },
-      div(selector)                     { return send('provide.div',      { selector }); },
-      meta()                            { return send('provide.meta',     {}); },
-      select(selector)                  { return send('provide.select',   { selector }); },
-      json(selector)                    { return send('provide.json',     { selector }); },
+      text(opts)      { return send('provide.text',     opts); },
+      textAll(opts)   { return send('provide.textAll',  opts); },
+      attr(opts)      { return send('provide.attr',     opts); },
+      attrAll(opts)   { return send('provide.attrAll',  opts); },
+      html(opts)      { return send('provide.html',     opts); },
+      table(opts)     { return send('provide.table',    opts); },
+      list(opts)      { return send('provide.list',     opts); },
+      links(opts)     { return send('provide.links',    opts ?? {}); },
+      images(opts)    { return send('provide.images',   opts ?? {}); },
+      form(opts)      { return send('provide.form',     opts); },
+      page()          { return send('provide.page',     {}); },
+      div(opts)       { return send('provide.div',      opts); },
+      meta()          { return send('provide.meta',     {}); },
+      select(opts)    { return send('provide.select',   opts); },
+      json(opts)      { return send('provide.json',     opts ?? {}); },
     },
 
-    // ── Fetch (legacy) ────────────────────────────────────────────────────────
-    fetch: {
-      text(selector)     { return send('fetch.text',      { query: selector }); },
-      textAll(selector)  { return send('fetch.textAll',   { selector }); },
-      links(selector)    { return send('fetch.links',     { query: selector }); },
-      linksAll()         { return send('fetch.links.all', {}); },
-      image(selector)    { return send('fetch.image',     { query: selector }); },
-      attr(selector, attr, opts = {}) { return send('fetch.attr', { selector, attr, ...opts }); },
-      attrAll(selector, attr)         { return send('fetch.attrAll', { selector, attr }); },
-    },
+    // ── Fetch (legacy) ───────────────────────────────────────────────────────
+    fetch: Object.assign(
+      {},
+      {
+        text(opts)              { return send('fetch.text',     opts); },
+        textAll(opts)           { return send('fetch.textAll',  opts); },
+        attr(opts)              { return send('fetch.attr',     opts); },
+        attrAll(opts)           { return send('fetch.attrAll',  opts); },
+        links: Object.assign(
+          (opts) => send('fetch.links', opts),
+          { all: () => send('fetch.links.all', {}) }
+        ),
+        image(opts)             { return send('fetch.image',    opts); },
+      }
+    ),
 
-    // ── Search (legacy DOM snapshot) ──────────────────────────────────────────
+    // ── Search (legacy) ──────────────────────────────────────────────────────
     search: {
-      css()       { return send('search.css', {}); },
-      id(query)   { return send('search.id',  { query }); },
+      css(opts)  { return send('search.css', opts); },
+      id(opts)   { return send('search.id',  opts); },
     },
 
-    // ── Capture ───────────────────────────────────────────────────────────────
+    // ── Capture ──────────────────────────────────────────────────────────────
     capture: {
-      start()     { return send('capture.start',    {}); },
-      stop()      { return send('capture.stop',     {}); },
-      requests()  { return send('capture.requests', {}); },
-      ws()        { return send('capture.ws',       {}); },
-      cookies()   { return send('capture.cookies',  {}); },
-      storage()   { return send('capture.storage',  {}); },
-      clear()     { return send('capture.clear',    {}); },
+      start()    { return send('capture.start',    {}); },
+      stop()     { return send('capture.stop',     {}); },
+      requests() { return send('capture.requests', {}); },
+      ws()       { return send('capture.ws',       {}); },
+      cookies()  { return send('capture.cookies',  {}); },
+      storage()  { return send('capture.storage',  {}); },
+      clear()    { return send('capture.clear',    {}); },
     },
 
-    // ── Intercept ─────────────────────────────────────────────────────────────
+    // ── Intercept ────────────────────────────────────────────────────────────
     intercept: {
-      block(pattern)            { return send('intercept.rule.add', { pattern, block: true }); },
-      redirect(pattern, url)    { return send('intercept.rule.add', { pattern, redirect: url }); },
-      headers(pattern, headers) { return send('intercept.rule.add', { pattern, setHeaders: headers }); },
-      respond(pattern, body)    { return send('intercept.rule.add', { pattern, respond: body }); },
-      modifyResponse(pattern, fn) { return send('intercept.rule.add', { pattern, modifyResponse: fn?.toString() }); },
-      clear()                   { return send('intercept.rule.clear', {}); },
+      block(pattern)                  { return send('intercept.rule.add', { pattern, block: true }); },
+      redirect(pattern, redirectUrl)  { return send('intercept.rule.add', { pattern, redirect: redirectUrl }); },
+      headers(pattern, headers)       { return send('intercept.rule.add', { pattern, setHeaders: headers }); },
+      respond(pattern, response)      { return send('intercept.rule.add', { pattern, respond: response }); },
+      modifyResponse(pattern, fn)     { return send('intercept.rule.add', { pattern, modifyResponse: fn?.toString() }); },
+      clear(type)                     { return send('intercept.rule.clear', { type }); },
     },
 
-    // ── Cookies ───────────────────────────────────────────────────────────────
+    // ── Cookies ──────────────────────────────────────────────────────────────
     cookies: {
-      set(opts)              { return send('cookie.set',    opts); },
-      get(name, domain)      { return send('cookie.get',    { name, domain }); },
-      delete(name, domain)   { return send('cookie.delete', { name, domain }); },
-      list(domain)           { return send('cookie.list',   { domain }); },
+      set(name, value, domain, path)  { return send('cookie.set',    { name, value, domain, path }); },
+      get(name, domain)               { return send('cookie.get',    { name, domain }); },
+      delete(name, domain)            { return send('cookie.delete', { name, domain }); },
+      list(domain)                    { return send('cookie.list',   { domain }); },
     },
 
-    // ── Session ───────────────────────────────────────────────────────────────
+    // ── Session ──────────────────────────────────────────────────────────────
     session: {
       export()                    { return send('session.export',       {}); },
       import(data)                { return send('session.import',       { data }); },
       reload()                    { return send('session.reload',       {}); },
       paths()                     { return send('session.paths',        {}); },
+      cookiesPath()               { return send('session.cookiesPath',  {}); },
+      profilePath()               { return send('session.profilePath',  {}); },
+      wsPath()                    { return send('session.wsPath',       {}); },
+      pingsPath()                 { return send('session.pingsPath',    {}); },
       setWsSave(enabled = true)   { return send('session.ws.save',     { enabled }); },
       setPingsSave(enabled = true){ return send('session.pings.save',  { enabled }); },
     },
 
-    // ── Expose (RPC) ──────────────────────────────────────────────────────────
+    // ── Expose (RPC) ─────────────────────────────────────────────────────────
+    _exposedListeners: {},
+
     exposeFunction(name, fn) {
-      client.on('exposed_call', async (d) => {
+      if (site._exposedListeners[name]) {
+        client.removeListener('exposed_call', site._exposedListeners[name]);
+      }
+      const listener = async (d) => {
         if (d.tabId !== tabId || d.name !== name) return;
+        let args = d.args ?? [];
+        if (d.data !== undefined && d.data !== null) {
+          if (typeof d.data === 'string') {
+            try { args = [JSON.parse(d.data)]; } catch { args = [d.data]; }
+          } else { args = [d.data]; }
+        }
         try {
-          const result = await fn(...(d.args ?? []));
-          send('exposed.result', { callId: d.callId, result: String(result ?? ''), isError: false });
+          const result = await fn(...args);
+          send('exposed.result', { callId: d.callId, result: JSON.stringify(result ?? true), isError: false });
         } catch (e) {
           send('exposed.result', { callId: d.callId, result: String(e.message), isError: true });
         }
-      });
+      };
+      site._exposedListeners[name] = listener;
+      client.on('exposed_call', listener);
       return send('expose.function', { name });
     },
 
-    exposeAndInject(name, fn, js) {
+    unexposeFunction(name) {
+      if (site._exposedListeners[name]) {
+        client.removeListener('exposed_call', site._exposedListeners[name]);
+        delete site._exposedListeners[name];
+      }
+      return Promise.resolve();
+    },
+
+    clearExposedFunctions() {
+      for (const name of Object.keys(site._exposedListeners)) {
+        client.removeListener('exposed_call', site._exposedListeners[name]);
+      }
+      site._exposedListeners = {};
+      return Promise.resolve();
+    },
+
+    exposeAndInject(name, fn, injectionJs) {
+      const js = typeof injectionJs === 'function' ? injectionJs(name) : injectionJs;
       return site.exposeFunction(name, fn).then(() => send('addInitScript', { js }));
     },
 
-    addInitScript(js) { return send('addInitScript', { js }); },
-
-    // ── Iframe ────────────────────────────────────────────────────────────────
-    iframe: {
-      list()                          { return send('iframe.list',    {}); },
-      evaluate(index, js)             { return send('iframe.evaluate',{ index, js }); },
-      click(index, selector)          { return send('iframe.click',   { index, selector }); },
-      type(index, selector, text)     { return send('iframe.type',    { index, selector, text }); },
-      text(index, selector)           { return send('iframe.text',    { index, selector }); },
-      html(index, selector)           { return send('iframe.html',    { index, selector }); },
-      waitSel(index, selector, opts)  { return send('iframe.waitSel', { index, selector, ...opts }); },
+    addInitScript(js) {
+      const code = typeof js === 'function' ? `(${js.toString()})()` : js;
+      return send('addInitScript', { js: code });
     },
 
-    // ── Captcha & Block ───────────────────────────────────────────────────────
+    // ── Iframe ───────────────────────────────────────────────────────────────
+    iframe: {
+      list()              { return send('iframe.list',    {}); },
+      evaluate(opts)      { return send('iframe.evaluate', opts); },
+      click(opts)         { return send('iframe.click',    opts); },
+      type(opts)          { return send('iframe.type',     opts); },
+      text(opts)          { return send('iframe.text',     opts); },
+      html(opts)          { return send('iframe.html',     opts); },
+      waitSel(opts)       { return send('iframe.waitSel',  opts); },
+    },
+
+    // ── Captcha & Block ──────────────────────────────────────────────────────
     captcha: {
-      status()             { return send('captcha.status',      {}); },
-      resolve(token)       { return send('captcha.resolve',     { token }); },
-      pause()              { return send('captcha.pause',       {}); },
-      check()              { return send('captcha.check',       {}); },
-      setAutoRetry(v)      { return send('captcha.autoRetry',   { enabled: v }); },
+      status()                   { return send('captcha.status',           {}); },
+      blockStatus()              { return send('captcha.blockStatus',      {}); },
+      resolve(token)             { return send('captcha.resolve',          { token }); },
+      pause()                    { return send('captcha.pause',            {}); },
+      check()                    { return send('captcha.check',            {}); },
+      setAutoRetry(v)            { return send('captcha.autoRetry',        { enabled: v }); },
+      blockRetry()               { return send('captcha.blockRetry',       {}); },
+      waitForResolution(timeout) { return send('captcha.waitResolution',   { timeout }); },
+      onCaptcha(tabId, handler)  {
+        client.on('captcha', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
+      },
+      onCaptchaResolved(tabId, handler) {
+        client.on('captcha:resolved', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
+      },
+      onBlocked(tabId, handler)  {
+        client.on('blocked', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
+      },
+      onBlockRetry(tabId, handler) {
+        client.on('block:retry', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
+      },
     },
 
     block: {
-      status()   { return send('block.status', {}); },
-      retry()    { return send('block.retry',  {}); },
+      status()  { return send('block.status', {}); },
+      retry()   { return send('block.retry',  {}); },
     },
 
-    // ── Dialog & Upload ───────────────────────────────────────────────────────
+    // ── Dialog ───────────────────────────────────────────────────────────────
     dialog: {
-      accept(text)         { return send('dialog.accept',        { text }); },
-      dismiss()            { return send('dialog.dismiss',       {}); },
-      status()             { return send('dialog.status',        {}); },
-      upload(selector, filePath) { return send('upload', { selector, path: filePath }); },
-      waitAndAccept(opts)  { return send('dialog.waitAndAccept', opts ?? {}); },
-      waitAndDismiss(opts) { return send('dialog.waitAndDismiss',opts ?? {}); },
+      accept(text)          { return send('dialog.accept',        { text }); },
+      dismiss()             { return send('dialog.dismiss',       {}); },
+      status()              { return send('dialog.status',        {}); },
+      setAutoAction(action) { return send('dialog.setAutoAction', { action }); },
+      upload(selector, filePath) { return send('upload',          { selector, path: filePath }); },
+      waitAndAccept(timeout)     { return send('dialog.waitAndAccept',  { timeout }); },
+      waitAndDismiss(timeout)    { return send('dialog.waitAndDismiss', { timeout }); },
+      onDialog(tabId, handler)   {
+        client.on('dialog', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
+      },
     },
 
-    // ── Human mode ────────────────────────────────────────────────────────────
+    // ── Human ────────────────────────────────────────────────────────────────
     human: {
-      set(opts)                       { return send('human.set',  opts); },
-      get()                           { return send('human.get',  {}); },
-      type(selector, text, opts = {}) { return send('human.type', { selector, text, ...opts }); },
-      click(selector, opts = {})      { return send('human.click',{ selector, ...opts }); },
+      set(opts)                         { return send('human.set',   opts); },
+      get()                             { return send('human.get',   {}); },
+      type(opts)                        { return send('human.type',  opts); },
+      click(opts)                       { return send('human.click', opts); },
     },
 
-    // ── Screenshot & PDF ──────────────────────────────────────────────────────
-    screenshot(opts = {})   { return send('screenshot',    opts); },
-    pdf(opts = {})          { return send('pdf',           opts); },
-    blockImages()           { return send('block.images',  {}); },
-    unblockImages()         { return send('unblock.images',{}); },
+    // ── Screenshot & PDF ─────────────────────────────────────────────────────
+    screenshot(filePath)  { return send('screenshot', filePath ? { path: filePath } : {}); },
+    pdf(filePath)         { return send('pdf',        filePath ? { path: filePath } : {}); },
+    blockImages()         { return send('block.images',   {}); },
+    unblockImages()       { return send('unblock.images', {}); },
 
-    // ── QR (built-in C++ detector) ────────────────────────────────────────────
+    // ── QR ───────────────────────────────────────────────────────────────────
     qr: {
       status()  { return send('qr.status', {}); },
       force()   { return send('qr.force',  {}); },
     },
 
-    // ── Storage (nothing-innerstorage) ────────────────────────────────────────
+    // ── Storage ──────────────────────────────────────────────────────────────
     storage: {
-      dump()    { return send('storage.dump',  {}); },
-      clear()   { return send('storage.clear', {}); },
+      dump()   { return send('storage.dump',  {}); },
+      clear()  { return send('storage.clear', {}); },
     },
 
-    // ── Media capture ─────────────────────────────────────────────────────────
+    // ── API Server (site-level) ───────────────────────────────────────────────
+    api(path, handler, opts = {}) {
+      return send('api.register', {
+        path:   `/${name}${path}`,
+        method: opts.method  || 'GET',
+        ttl:    opts.ttl     || 0,
+        detail: opts.detail  || {},
+        before: (opts.before || []).map(fn => fn.toString()),
+        handler: handler.toString(),
+      });
+    },
+
+    // ── Proxy (per-tab) ───────────────────────────────────────────────────────
+    proxy: {
+      load(filePath)         { return send('proxy.load',      { path: filePath }); },
+      fetch(url)             { return send('proxy.fetch',     { url }); },
+      ovpn(filePath)         { return send('proxy.ovpn',      { path: filePath }); },
+      set(proxy)             { return send('proxy.set',       { proxy }); },
+      enable()               { return send('proxy.enable',    {}); },
+      disable()              { return send('proxy.disable',   {}); },
+      test()                 { return send('proxy.test',      {}); },
+      testStop()             { return send('proxy.test.stop', {}); },
+      next()                 { return send('proxy.next',      {}); },
+      rotation(mode, interval) { return send('proxy.rotation', { mode, interval }); },
+      current()              { return send('proxy.current',   {}); },
+      stats()                { return send('proxy.stats',     {}); },
+      list(limit)            { return send('proxy.list',      { limit }); },
+      config(opts)           { return send('proxy.config',    opts); },
+      save(filePath, filter) { return send('proxy.save',      { path: filePath, filter }); },
+    },
+
+    // ── Media ────────────────────────────────────────────────────────────────
     media: {
       start(opts = {})  { return send('media.start',  opts); },
       stop()            { return send('media.stop',   {}); },
@@ -276,26 +367,8 @@ function createSite(name, url, tabId, client, piggyInstance) {
 
     // ── Cookie inject ─────────────────────────────────────────────────────────
     cookieinject: {
-      set(cookies)   { return send('cookieinject.set',  { cookies }); },
-      clear()        { return send('cookieinject.clear', {}); },
-    },
-
-    // ── Proxy (per-tab convenience — global proxy lives on piggy directly) ────
-    proxy: {
-      load(filePath)          { return send('proxy.load',     { path: filePath }); },
-      fetch(url)              { return send('proxy.fetch',    { url }); },
-      ovpn(filePath)          { return send('proxy.ovpn',     { path: filePath }); },
-      set(proxy)              { return send('proxy.set',      { proxy }); },
-      enable()                { return send('proxy.enable',   {}); },
-      disable()               { return send('proxy.disable',  {}); },
-      test()                  { return send('proxy.test',     {}); },
-      testStop()              { return send('proxy.test.stop',{}); },
-      next()                  { return send('proxy.next',     {}); },
-      rotation(opts = {})     { return send('proxy.rotation', opts); },
-      current()               { return send('proxy.current',  {}); },
-      stats()                 { return send('proxy.stats',    {}); },
-      list()                  { return send('proxy.list',     {}); },
-      save(filePath)          { return send('proxy.save',     { path: filePath }); },
+      set(cookies)  { return send('cookieinject.set',   { cookies }); },
+      clear()       { return send('cookieinject.clear', {}); },
     },
   };
 
