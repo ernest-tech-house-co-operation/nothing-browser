@@ -350,7 +350,7 @@ await piggy.serve(3000, { title: 'Amazon API', version: '1.0.0' })
 ## Plugins
 
 Piggy has four official plugins. Every plugin uses `piggy.extend()` except `nothing-store` which uses `store.attach(piggy)`. Always install plugins **after** `piggy.launch()` and **after** `piggy.register()`.
-plugins in piggy are esentialy topping piggy can scrape very effectivelywithout any plugins because the developer put the logic in c++ plugins just give you more control over solid apis the storage api is included in the official ibrary but nothing-storage(you will read about it soon) gives the user more control over the api
+
 ---
 
 ### nothing-whatsapp
@@ -823,13 +823,5 @@ project/
 | Save scraped data | `nothing-store` plugin with `piggy.store.json` schema |
 
 ---
-## Types of errors
-When a user recives some of this errors this is the cause 
-await piggy.site.somefunctionname 
-error
-somefunctionname is undefined
-this means the js library is out of date askthe user to update to the latest version of the js lib
-command not found error
-this error comes from the c++ binary this means the user is trying to use a new api with an old binary 
- 
+
 *Nothing Ecosystem · Ernest Tech House · Kenya · 2026*
