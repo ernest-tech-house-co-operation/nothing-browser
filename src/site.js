@@ -6,8 +6,7 @@ function createSite(name, url, tabId, client, piggyInstance) {
   const emitter = new EventEmitter();
 
   // Forward tab-specific events from the global client
-  const tabEvents = ['qr', 'qr:scanned', 'qr:timeout', 'dialog', 'captcha',
-    'captcha:resolved', 'blocked', 'navigate', 'storage:loaded', 'storage:saved'];
+  const tabEvents = ['dialog', 'navigate', 'storage:loaded', 'storage:saved'];
   tabEvents.forEach(ev => {
     client.on(ev, (d) => { if (d.tabId === tabId) emitter.emit(ev, d.url ?? d); });
   });
@@ -35,6 +34,7 @@ function createSite(name, url, tabId, client, piggyInstance) {
     // ── Navigation ───────────────────────────────────────────────────────────
     navigate(targetUrl)   { return send('navigate',        { url: targetUrl ?? url }); },
     reload()              { return send('reload',          {}); },
+    refresh()             { return send('refresh',         {}); },
     goBack()              { return send('go.back',         {}); },
     goForward()           { return send('go.forward',      {}); },
     title()               { return send('page.title',      {}); },
@@ -48,7 +48,6 @@ function createSite(name, url, tabId, client, piggyInstance) {
     wait(ms)              { return new Promise(r => setTimeout(r, ms)); },
     noclose()             { return send('noclose', {}); },
     close()               { return send('tab.close', {}); },
-    poolStats()           { return send('tab.poolStats', {}); },
 
     // ── Wait ─────────────────────────────────────────────────────────────────
     wait: Object.assign(
@@ -64,6 +63,15 @@ function createSite(name, url, tabId, client, piggyInstance) {
         navigation()      { return send('wait.navigation', {}); },
       }
     ),
+    //run in dev tools this is another map of evaluate not what i was thinking the fix will be an evaluate but this is not the last time am doing this this wi take a major shift sonner or later because i dont want to run in page context instead i want console context i wonder why people are not seeing the diffrence fom my POV BUT HMM NO WORRIES 
+    // Alias — same mechanism as evaluate(), named for the DWR-bypass use case
+    // (iTax-style portals). Runs a fetch from inside the tab's own JS context,
+    // inheriting whatever session/CSRF cookies the browser already holds.
+    runjs: {
+      indevtools(fn, ...args) {
+        return site.evaluate(fn, ...args);
+      },
+    },
 
     // ── Interactions ─────────────────────────────────────────────────────────
     click(selector, opts = {})            { return send('click',    { selector, ...opts }); },
@@ -87,46 +95,61 @@ function createSite(name, url, tabId, client, piggyInstance) {
       drag(from, to)     { return send('mouse.drag', { from, to }); },
     },
 
-    evaluate(js, ...args) { return send('evaluate', { js, args }); },
+    evaluate(fn, ...args) {
+  const code = typeof fn === 'function'
+    ? `(${fn.toString()})(${args.map(a => JSON.stringify(a)).join(',')})`
+    : fn;
+  return send('evaluate', { js: code });
+},
 
-    // ── Find ─────────────────────────────────────────────────────────────────
+    // ── Find (boolean existence/state checks only) ──────────────────────────
     find: {
-      css(selector, _tabId)                  { return send('find.css',           { selector }); },
-      all(selector, _tabId)                  { return send('find.all',           { selector }); },
-      first(selector, _tabId)                { return send('find.first',         { selector }); },
-      byText(opts, _tabId)                   { return send('find.byText',        opts); },
-      byAttr(opts, _tabId)                   { return send('find.byAttr',        opts); },
-      byTag(tag, _tabId)                     { return send('find.byTag',         { tag }); },
-      byPlaceholder(text, _tabId)            { return send('find.byPlaceholder', { text }); },
-      byRole(opts, _tabId)                   { return send('find.byRole',        opts); },
-      closest(opts, _tabId)                  { return send('find.closest',       opts); },
-      parent(selector, _tabId)               { return send('find.parent',        { selector }); },
-      children(selector, _tabId)             { return send('find.children',      { selector }); },
-      filter(opts, _tabId)                   { return send('find.filter',        opts); },
-      count(selector, _tabId)                { return send('find.count',         { selector }); },
-      exists(selector, _tabId)               { return send('find.exists',        { selector }); },
-      visible(selector, _tabId)              { return send('find.visible',       { selector }); },
-      enabled(selector, _tabId)              { return send('find.enabled',       { selector }); },
-      checked(selector, _tabId)              { return send('find.checked',       { selector }); },
+      exists(selector)               { return send('find.exists',   { selector }); },
+      matches(selector)               { return send('find.matches',  { selector }); },
+      visible(selector)               { return send('find.visible',  { selector }); },
+      enabled(selector)               { return send('find.enabled',  { selector }); },
+      checked(selector)               { return send('find.checked',  { selector }); },
+      hasClass(selector, className)   { return send('find.hasClass', { selector, className }); },
+      hasAttr(selector, attr)         { return send('find.hasAttr',  { selector, attr }); },
+      hasText(selector, text) {
+        // selector optional — omit to search the whole body
+        if (text === undefined) { text = selector; selector = undefined; }
+        return send('find.hasText', { selector, text });
+      },
     },
 
-    // ── Provide ──────────────────────────────────────────────────────────────
+    // ── Provide (actual data extraction) ─────────────────────────────────────
     provide: {
-      text(opts)      { return send('provide.text',     opts); },
-      textAll(opts)   { return send('provide.textAll',  opts); },
-      attr(opts)      { return send('provide.attr',     opts); },
-      attrAll(opts)   { return send('provide.attrAll',  opts); },
-      html(opts)      { return send('provide.html',     opts); },
-      table(opts)     { return send('provide.table',    opts); },
-      list(opts)      { return send('provide.list',     opts); },
-      links(opts)     { return send('provide.links',    opts ?? {}); },
-      images(opts)    { return send('provide.images',   opts ?? {}); },
-      form(opts)      { return send('provide.form',     opts); },
-      page()          { return send('provide.page',     {}); },
-      div(opts)       { return send('provide.div',      opts); },
-      meta()          { return send('provide.meta',     {}); },
-      select(opts)    { return send('provide.select',   opts); },
-      json(opts)      { return send('provide.json',     opts ?? {}); },
+      text(selector)              { return send('provide.text',     { selector }); },
+      textAll(selector)           { return send('provide.textAll',  { selector }); },
+      attr(selector, attr)        { return send('provide.attr',     { selector, attr }); },
+      attrAll(selector, attr)     { return send('provide.attrAll',  { selector, attr }); },
+      html(selector, opts = {})   { return send('provide.html',     { selector, ...opts }); },
+      table(selector)             { return send('provide.table',    { selector }); },
+      list(selector)              { return send('provide.list',     { selector }); },
+      links(selector)             { return send('provide.links',    selector ? { selector } : {}); },
+      images(selector)            { return send('provide.images',   selector ? { selector } : {}); },
+      form(selector)              { return send('provide.form',     { selector }); },
+      page()                      { return send('provide.page',     {}); },
+      div(selector)               { return send('provide.div',      { selector }); },
+      meta()                      { return send('provide.meta',     {}); },
+      select(selector)            { return send('provide.select',   { selector }); },
+      json(selector)              { return send('provide.json',     { selector }); },
+
+      // moved here from find.* — these return actual data, not booleans
+      count(selector)             { return send('provide.count',    { selector }); },
+      first(selector)             { return send('provide.first',    { selector }); },
+      all(selector)                { return send('provide.all',      { selector }); },
+      closest(selector, ancestorSelector) {
+        return send('provide.closest', { selector, ancestorSelector });
+      },
+      parent(selector)            { return send('provide.parent',   { selector }); },
+      children(selector)          { return send('provide.children', { selector }); },
+      filter(selector, filter)    { return send('provide.filter',   { selector, filter }); },
+      byRole(role)                 { return send('provide.byRole',   { role }); },
+      byTag(tag)                  { return send('provide.byTag',    { tag }); },
+      byPlaceholder(text)         { return send('provide.byPlaceholder', { text }); },
+      byAttr(attr, value)         { return send('provide.byAttr',   { attr, value }); },
     },
 
     // ── Fetch (legacy) ───────────────────────────────────────────────────────
@@ -157,8 +180,6 @@ function createSite(name, url, tabId, client, piggyInstance) {
       stop()     { return send('capture.stop',     {}); },
       requests() { return send('capture.requests', {}); },
       ws()       { return send('capture.ws',       {}); },
-      cookies()  { return send('capture.cookies',  {}); },
-      storage()  { return send('capture.storage',  {}); },
       clear()    { return send('capture.clear',    {}); },
     },
 
@@ -172,26 +193,11 @@ function createSite(name, url, tabId, client, piggyInstance) {
       clear(type)                     { return send('intercept.rule.clear', { type }); },
     },
 
-    // ── Cookies ──────────────────────────────────────────────────────────────
-    cookies: {
-      set(name, value, domain, path)  { return send('cookie.set',    { name, value, domain, path }); },
-      get(name, domain)               { return send('cookie.get',    { name, domain }); },
-      delete(name, domain)            { return send('cookie.delete', { name, domain }); },
-      list(domain)                    { return send('cookie.list',   { domain }); },
-    },
-
     // ── Session ──────────────────────────────────────────────────────────────
     session: {
       export()                    { return send('session.export',       {}); },
       import(data)                { return send('session.import',       { data }); },
       reload()                    { return send('session.reload',       {}); },
-      paths()                     { return send('session.paths',        {}); },
-      cookiesPath()               { return send('session.cookiesPath',  {}); },
-      profilePath()               { return send('session.profilePath',  {}); },
-      wsPath()                    { return send('session.wsPath',       {}); },
-      pingsPath()                 { return send('session.pingsPath',    {}); },
-      setWsSave(enabled = true)   { return send('session.ws.save',     { enabled }); },
-      setPingsSave(enabled = true){ return send('session.pings.save',  { enabled }); },
     },
 
     // ── Expose (RPC) ─────────────────────────────────────────────────────────
@@ -247,46 +253,6 @@ function createSite(name, url, tabId, client, piggyInstance) {
       return send('addInitScript', { js: code });
     },
 
-    // ── Iframe ───────────────────────────────────────────────────────────────
-    iframe: {
-      list()              { return send('iframe.list',    {}); },
-      evaluate(opts)      { return send('iframe.evaluate', opts); },
-      click(opts)         { return send('iframe.click',    opts); },
-      type(opts)          { return send('iframe.type',     opts); },
-      text(opts)          { return send('iframe.text',     opts); },
-      html(opts)          { return send('iframe.html',     opts); },
-      waitSel(opts)       { return send('iframe.waitSel',  opts); },
-    },
-
-    // ── Captcha & Block ──────────────────────────────────────────────────────
-    captcha: {
-      status()                   { return send('captcha.status',           {}); },
-      blockStatus()              { return send('captcha.blockStatus',      {}); },
-      resolve(token)             { return send('captcha.resolve',          { token }); },
-      pause()                    { return send('captcha.pause',            {}); },
-      check()                    { return send('captcha.check',            {}); },
-      setAutoRetry(v)            { return send('captcha.autoRetry',        { enabled: v }); },
-      blockRetry()               { return send('captcha.blockRetry',       {}); },
-      waitForResolution(timeout) { return send('captcha.waitResolution',   { timeout }); },
-      onCaptcha(tabId, handler)  {
-        client.on('captcha', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
-      },
-      onCaptchaResolved(tabId, handler) {
-        client.on('captcha:resolved', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
-      },
-      onBlocked(tabId, handler)  {
-        client.on('blocked', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
-      },
-      onBlockRetry(tabId, handler) {
-        client.on('block:retry', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
-      },
-    },
-
-    block: {
-      status()  { return send('block.status', {}); },
-      retry()   { return send('block.retry',  {}); },
-    },
-
     // ── Dialog ───────────────────────────────────────────────────────────────
     dialog: {
       accept(text)          { return send('dialog.accept',        { text }); },
@@ -294,19 +260,11 @@ function createSite(name, url, tabId, client, piggyInstance) {
       status()              { return send('dialog.status',        {}); },
       setAutoAction(action) { return send('dialog.setAutoAction', { action }); },
       upload(selector, filePath) { return send('upload',          { selector, path: filePath }); },
-      waitAndAccept(timeout)     { return send('dialog.waitAndAccept',  { timeout }); },
-      waitAndDismiss(timeout)    { return send('dialog.waitAndDismiss', { timeout }); },
+      waitAndAccept(timeout, text)  { return send('dialog.waitAndAccept',  { timeout, text }); },
+      waitAndDismiss(timeout)       { return send('dialog.waitAndDismiss', { timeout }); },
       onDialog(tabId, handler)   {
         client.on('dialog', d => { if (d.tabId === tabId || tabId === '*') handler(d); });
       },
-    },
-
-    // ── Human ────────────────────────────────────────────────────────────────
-    human: {
-      set(opts)                         { return send('human.set',   opts); },
-      get()                             { return send('human.get',   {}); },
-      type(opts)                        { return send('human.type',  opts); },
-      click(opts)                       { return send('human.click', opts); },
     },
 
     // ── Screenshot & PDF ─────────────────────────────────────────────────────
@@ -314,18 +272,6 @@ function createSite(name, url, tabId, client, piggyInstance) {
     pdf(filePath)         { return send('pdf',        filePath ? { path: filePath } : {}); },
     blockImages()         { return send('block.images',   {}); },
     unblockImages()       { return send('unblock.images', {}); },
-
-    // ── QR ───────────────────────────────────────────────────────────────────
-    qr: {
-      status()  { return send('qr.status', {}); },
-      force()   { return send('qr.force',  {}); },
-    },
-
-    // ── Storage ──────────────────────────────────────────────────────────────
-    storage: {
-      dump()   { return send('storage.dump',  {}); },
-      clear()  { return send('storage.clear', {}); },
-    },
 
     // ── API Server (site-level) ───────────────────────────────────────────────
     api(path, handler, opts = {}) {
@@ -356,19 +302,6 @@ function createSite(name, url, tabId, client, piggyInstance) {
       list(limit)            { return send('proxy.list',      { limit }); },
       config(opts)           { return send('proxy.config',    opts); },
       save(filePath, filter) { return send('proxy.save',      { path: filePath, filter }); },
-    },
-
-    // ── Media ────────────────────────────────────────────────────────────────
-    media: {
-      start(opts = {})  { return send('media.start',  opts); },
-      stop()            { return send('media.stop',   {}); },
-      status()          { return send('media.status', {}); },
-    },
-
-    // ── Cookie inject ─────────────────────────────────────────────────────────
-    cookieinject: {
-      set(cookies)  { return send('cookieinject.set',   { cookies }); },
-      clear()       { return send('cookieinject.clear', {}); },
     },
   };
 

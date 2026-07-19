@@ -8,7 +8,7 @@ const log = require('./logger');
 
 const SOCKET_NAME = process.platform === 'win32'
   ? '\\\\.\\pipe\\piggy'
-  : '/tmp/piggy.sock';
+  : '/tmp/piggy';
 
 class PiggyClient extends EventEmitter {
   constructor(opts = {}) {

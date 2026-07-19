@@ -1,6 +1,6 @@
 {
   "name": "nothing-browser",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Headless browser automation library for the Nothing Browser binary. Dot-notation API over a C++ Qt6 backend.",
   "main": "src/piggy.js",
   "exports": {
