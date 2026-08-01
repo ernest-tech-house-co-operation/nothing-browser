@@ -1,105 +1,102 @@
 'use strict';
 
-const net  = require('net');
-const http = require('http');
+const WebSocket = require('ws');
 const { EventEmitter } = require('events');
 const { randomUUID }   = require('crypto');
 const log = require('./logger');
 
-const SOCKET_NAME = process.platform === 'win32'
-  ? '\\\\.\\pipe\\piggy'
-  : '/tmp/piggy';
+// Fixed. Forever. Every script and every binary instance agrees on this
+// without any config file, env var, or flag — that's the whole point.
+const PORT = 2005;
 
 class PiggyClient extends EventEmitter {
   constructor(opts = {}) {
     super();
-    this._opts    = opts;
-    this._sock    = null;
+    this._opts    = { host: '127.0.0.1', port: PORT, ...opts };
+    this._ws      = null;
     this._pending = new Map();
-    this._buf     = '';
   }
+
+  // ── Connect ────────────────────────────────────────────────────────────────
+  // Always the same transport (WebSocket), whether it's a binary you spawned
+  // yourself or a shared instance someone else already has running.
 
   connect() {
-    if (this._opts.host) return this._connectHttp();
-    return this._connectSocket();
+    return this._open({ retries: 20, retryDelayMs: 250 });
   }
 
-  // ── Named pipe / Unix socket ───────────────────────────────────────────────
+  // ── Probe ──────────────────────────────────────────────────────────────────
+  // Used by Piggy.launch() to check "is something already listening on
+  // 2005?" without throwing or logging noise if not. Resolves true/false,
+  // never rejects.
 
-  _connectSocket() {
-    return new Promise((resolve, reject) => {
-      log.network(`Connecting to socket: ${SOCKET_NAME}`);
-      const sock = net.createConnection(SOCKET_NAME);
-      sock.setEncoding('utf8');
+  async probe(timeoutMs = 400) {
+    try {
+      await this._open({ retries: 1, retryDelayMs: 0, timeoutMs, silent: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
-      sock.once('connect', () => {
-        this._sock = sock;
-        log.success('Socket connected');
+  _open({ retries, retryDelayMs, timeoutMs = 3000, silent = false } = {}) {
+    const url = `ws://${this._opts.host}:${this._opts.port}`;
+    const headers = this._opts.key ? { 'X-Piggy-Key': this._opts.key } : {};
+
+    const attempt = (attemptsLeft) => new Promise((resolve, reject) => {
+      if (!silent) log.network(`Connecting to Piggy: ${url}`);
+      const ws = new WebSocket(url, { headers, handshakeTimeout: timeoutMs });
+
+      const timer = setTimeout(() => {
+        ws.terminate();
+        fail(new Error(`Connection to ${url} timed out`));
+      }, timeoutMs);
+
+      const fail = (err) => {
+        clearTimeout(timer);
+        if (attemptsLeft > 1) {
+          setTimeout(() => attempt(attemptsLeft - 1).then(resolve, reject), retryDelayMs);
+        } else {
+          if (!silent) log.error(`Connection failed: ${err.message}`);
+          reject(err);
+        }
+      };
+
+      ws.once('open', () => {
+        clearTimeout(timer);
+        this._ws = ws;
+        this._wireSocket(ws);
+        if (!silent) log.success(`Connected: ${url}`);
         resolve();
       });
 
-      sock.once('error', (err) => {
-        log.error(`Socket connection error: ${err.message}`);
-        reject(err);
+      ws.once('unexpected-response', (req, res) => {
+        clearTimeout(timer);
+        let body = '';
+        res.on('data', (c) => (body += c));
+        res.on('end', () => fail(new Error(
+          `Piggy rejected connection: ${res.statusCode} ${body.trim()}`
+        )));
       });
 
-      sock.on('data', (chunk) => {
-        this._buf += chunk;
-        let nl;
-        while ((nl = this._buf.indexOf('\n')) !== -1) {
-          const line = this._buf.slice(0, nl);
-          this._buf  = this._buf.slice(nl + 1);
-          if (!line.trim()) continue;
-          let msg;
-          try { msg = JSON.parse(line); } catch { continue; }
-          this._onMessage(msg);
-        }
-      });
-
-      sock.on('close', () => {
-        log.warn('Socket closed');
-        for (const [, p] of this._pending) p.reject(new Error('socket closed'));
-        this._pending.clear();
-      });
+      ws.once('error', (err) => fail(err));
     });
+
+    return attempt(retries);
   }
 
-  // ── HTTP mode (remote VPS, port 2005) ─────────────────────────────────────
+  _wireSocket(ws) {
+    ws.on('message', (raw) => {
+      let msg;
+      try { msg = JSON.parse(raw.toString()); } catch { return; }
+      this._onMessage(msg);
+    });
 
-  _connectHttp() {
-    return new Promise((resolve, reject) => {
-      log.network(`Connecting to remote Piggy: ${this._opts.host}`);
-      const url  = new URL(this._opts.host);
-      const body = 'hello';
-      const req  = http.request({
-        hostname: url.hostname,
-        port:     url.port || 2005,
-        path:     '/',
-        method:   'POST',
-        headers:  {
-          'Content-Type':   'text/plain',
-          'Content-Length': Buffer.byteLength(body),
-          'X-Piggy-Key':    this._opts.key,
-        },
-      }, (res) => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => {
-          if (res.statusCode === 200) {
-            log.success(`Remote Piggy connected (${this._opts.host})`);
-            resolve();
-          } else {
-            const msg = `Piggy HTTP connect failed: ${res.statusCode} — ${data.trim()}`;
-            log.error(msg);
-            reject(new Error(msg));
-          }
-        });
-      });
-      req.on('error', (err) => {
-        log.error(`HTTP connect error: ${err.message}`);
-        reject(err);
-      });
-      req.end(body);
+    ws.on('close', () => {
+      log.warn('Piggy connection closed');
+      for (const [, p] of this._pending) p.reject(new Error('connection closed'));
+      this._pending.clear();
+      this.emit('_disconnected');
     });
   }
 
@@ -134,64 +131,21 @@ class PiggyClient extends EventEmitter {
 
   send(cmd, payload = {}) {
     log.network(`→ ${cmd}${payload.tabId ? ` [${payload.tabId}]` : ''}`);
-    if (this._opts.host) return this._sendHttp(cmd, payload);
-    return this._sendSocket(cmd, payload);
-  }
-
-  _sendSocket(cmd, payload) {
     return new Promise((resolve, reject) => {
-      const id  = randomUUID();
+      if (!this._ws || this._ws.readyState !== WebSocket.OPEN) {
+        reject(new Error('Piggy client is not connected'));
+        return;
+      }
+      const id = randomUUID();
       this._pending.set(id, { resolve, reject });
-      const msg = JSON.stringify({ id, cmd, payload }) + '\n';
-      this._sock.write(msg);
-    });
-  }
-
-  _sendHttp(cmd, payload) {
-    return new Promise((resolve, reject) => {
-      const url  = new URL(this._opts.host);
-      const body = JSON.stringify({ cmd, payload });
-      const req  = http.request({
-        hostname: url.hostname,
-        port:     url.port || 2005,
-        path:     '/',
-        method:   'POST',
-        headers:  {
-          'Content-Type':   'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          'X-Piggy-Key':    this._opts.key,
-        },
-      }, (res) => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => {
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.ok) resolve(parsed.data);
-            else {
-              const errMsg = parsed.data ?? 'piggy http error';
-              log.error(`HTTP command failed [${cmd}]: ${errMsg}`);
-              reject(new Error(errMsg));
-            }
-          } catch {
-            const errMsg = `Invalid response for [${cmd}]: ${data}`;
-            log.error(errMsg);
-            reject(new Error(errMsg));
-          }
-        });
-      });
-      req.on('error', (err) => {
-        log.error(`HTTP request error [${cmd}]: ${err.message}`);
-        reject(err);
-      });
-      req.end(body);
+      this._ws.send(JSON.stringify({ id, cmd, payload }));
     });
   }
 
   close() {
-    if (this._sock) { this._sock.destroy(); this._sock = null; }
+    if (this._ws) { this._ws.close(); this._ws = null; }
     log.debug('Client closed');
   }
 }
 
-module.exports = { PiggyClient };
+module.exports = { PiggyClient, PORT };

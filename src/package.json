@@ -1,0 +1,40 @@
+{
+  "name": "nothing-browser",
+  "version": "0.2.1",
+  "description": "Headless browser automation library for the Nothing Browser binary. Dot-notation API over a C++ Qt6 backend.",
+  "main": "src/piggy.js",
+  "exports": {
+    ".": {
+      "require": "./src/piggy.js",
+      "import": "./src/piggy.js",
+      "default": "./src/piggy.js"
+    }
+  },
+  "keywords": [
+    "nothing-browser",
+    "piggy",
+    "headless",
+    "browser-automation",
+    "scraper",
+    "qt6"
+  ],
+  "author": "Ernest Tech House",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BunElysiaReact/nothing-browser"
+  },
+  "homepage": "https://nothing-browser-docs.pages.dev/guide/piggy/",
+  "files": [
+    "src/",
+    "README.md"
+  ],
+  "dependencies": {
+    "ernest-logger": "^2.0.4",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "bun": ">=1.0.0"
+  }
+}

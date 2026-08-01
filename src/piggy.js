@@ -18,29 +18,50 @@ class Piggy extends EventEmitter {
   }
 
   // ── Launch (local) ────────────────────────────────────────────────────────
+  //
+  // First checks whether a Piggy instance is already listening on the fixed
+  // WebSocket port (2005). If so, this script just joins it — no new binary,
+  // no new browser process, just another connection sharing the same daemon.
+  // Only if nothing answers does it spawn a fresh binary and wait for it.
 
   async launch(opts = {}) {
     const { mode = 'tab', binary, args = [] } = opts;
     this._tabMode = mode;
-    log.info(`Launching Nothing Browser (mode: ${mode})`);
-    const binPath = resolveBinary(binary, mode);
-    this._proc = await spawnBinary(binPath, { args });
-    await new Promise(r => setTimeout(r, 1500));
-    this._client = new PiggyClient();
-    await this._client.connect();
+
+    const probeClient = new PiggyClient();
+    const alreadyRunning = await probeClient.probe();
+
+    if (alreadyRunning) {
+      log.info('Existing Piggy instance found on port 2005 — joining it');
+      this._client = probeClient;
+    } else {
+      log.info(`Launching Nothing Browser (mode: ${mode})`);
+      const binPath = resolveBinary(binary, mode);
+      this._proc = await spawnBinary(binPath, { args });
+      this._client = new PiggyClient();
+      await this._client.connect(); // retries internally until the WS server is up
+    }
+
     this._wireGlobalEvents();
     log.success('Piggy ready');
     return this;
   }
 
-  // ── Connect (remote HTTP) ─────────────────────────────────────────────────
+  // ── Connect (remote, or a specific known instance) ────────────────────────
+  // Same WebSocket transport as launch() — just pointed at a host, and with
+  // a key if that instance requires one. Port is still always 2005.
 
   async connect(opts = {}) {
-    log.info(`Connecting to remote Piggy at ${opts.host}`);
-    this._client = new PiggyClient({ host: opts.host, key: opts.key });
+    // Lenient: accept a bare hostname ("1.2.3.4") or an old-style URL
+    // ("http://1.2.3.4:2005") — either way we only need the hostname, since
+    // the port is always 2005 now.
+    let host = opts.host || '127.0.0.1';
+    if (/^https?:\/\//i.test(host)) host = new URL(host).hostname;
+    log.info(`Connecting to Piggy at ${host}:2005`);
+    this._client = new PiggyClient({ host, key: opts.key });
     await this._client.connect();
     this._wireGlobalEvents();
-    log.success(`Remote connection established (${opts.host})`);
+    log.success(`Connection established (${host}:2005)`);
     return this;
   }
 
@@ -120,12 +141,28 @@ class Piggy extends EventEmitter {
     if (opts.force) {
       if (this._proc) { this._proc.kill('SIGKILL'); this._proc = null; }
     } else {
+      // Per-script: closes only the tabs *this* script owns and drops this
+      // connection. The shared binary keeps running for anyone else
+      // connected to it.
       await this._client?.send('close', {}).catch(() => {});
     }
     if (this._client) { this._client.close(); this._client = null; }
     if (this._proc)   { this._proc.kill();    this._proc   = null; }
     this._sites = {};
     log.success('Piggy closed');
+  }
+
+  // ── Shutdown (global) ─────────────────────────────────────────────────────
+  // The real kill switch: terminates the shared binary entirely, along with
+  // every tab and every other script's connection to it. Use deliberately —
+  // this is not the same as close(), which only affects this script.
+
+  async shutdown() {
+    log.warn('Shutting down the shared Piggy instance for all connected scripts...');
+    await this._client?.send('shutdown', {}).catch(() => {});
+    if (this._client) { this._client.close(); this._client = null; }
+    if (this._proc)   { this._proc.kill();    this._proc   = null; }
+    this._sites = {};
   }
 
   // ── Detect binary ─────────────────────────────────────────────────────────
