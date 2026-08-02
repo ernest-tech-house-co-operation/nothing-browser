@@ -30,11 +30,17 @@ class PiggyClient extends EventEmitter {
   // 2005?" without throwing or logging noise if not. Resolves true/false,
   // never rejects.
 
-  async probe(timeoutMs = 400) {
+  async probe(timeoutMs = 1500) {
     try {
-      await this._open({ retries: 1, retryDelayMs: 0, timeoutMs, silent: true });
+      await this._open({ retries: 2, retryDelayMs: 150, timeoutMs, silent: true });
       return true;
-    } catch {
+    } catch (err) {
+      // A wrong/missing key means something IS there — don't let the
+      // caller mistake this for "nothing running, safe to spawn a new one".
+      if (err.authFailure) throw err;
+      // Otherwise it's a genuine "nothing answered" — but still worth
+      // knowing why, so this doesn't stay a silent mystery next time.
+      log.debug(`Probe found nothing on ${this._opts.host}:${this._opts.port} (${err.message})`);
       return false;
     }
   }
@@ -54,7 +60,10 @@ class PiggyClient extends EventEmitter {
 
       const fail = (err) => {
         clearTimeout(timer);
-        if (attemptsLeft > 1) {
+        // Don't burn retries on a key that's just wrong — that won't
+        // change on attempt #2. Only retry for genuine "nothing there yet"
+        // failures (still starting up, not listening, etc).
+        if (!err.authFailure && attemptsLeft > 1) {
           setTimeout(() => attempt(attemptsLeft - 1).then(resolve, reject), retryDelayMs);
         } else {
           if (!silent) log.error(`Connection failed: ${err.message}`);
@@ -63,12 +72,25 @@ class PiggyClient extends EventEmitter {
       };
 
       ws.once('open', () => {
+        // Don't resolve yet — a bad key still lets the WS handshake
+        // complete before the server closes us. Wait for the server's
+        // explicit {"type":"ready"} ack (or a close, which means auth
+        // failed) before treating the connection as usable.
+      });
+
+      const onFirstMessage = (raw) => {
+        let msg;
+        try { msg = JSON.parse(raw.toString()); } catch { return; }
+        if (msg.type !== 'ready') return;
+
         clearTimeout(timer);
+        ws.off('message', onFirstMessage);
         this._ws = ws;
         this._wireSocket(ws);
         if (!silent) log.success(`Connected: ${url}`);
         resolve();
-      });
+      };
+      ws.on('message', onFirstMessage);
 
       ws.once('unexpected-response', (req, res) => {
         clearTimeout(timer);
@@ -77,6 +99,21 @@ class PiggyClient extends EventEmitter {
         res.on('end', () => fail(new Error(
           `Piggy rejected connection: ${res.statusCode} ${body.trim()}`
         )));
+      });
+
+      ws.once('close', (code, reason) => {
+        // Only a failure if we haven't already resolved via the ready ack.
+        if (this._ws === ws) return; // already connected fine, this is a later close
+        const err = new Error(
+          `Piggy closed the connection before it was ready` +
+          `${code ? ` (code ${code})` : ''}` +
+          `${reason ? `: ${reason}` : ' — check your connection key'}`
+        );
+        // Policy Violation close code == the server accepted the WS
+        // handshake, then rejected us for a bad/missing key. Distinct from
+        // "nothing was listening at all" (ECONNREFUSED-style errors).
+        if (code === 1008) err.authFailure = true;
+        fail(err);
       });
 
       ws.once('error', (err) => fail(err));

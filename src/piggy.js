@@ -25,11 +25,23 @@ class Piggy extends EventEmitter {
   // Only if nothing answers does it spawn a fresh binary and wait for it.
 
   async launch(opts = {}) {
-    const { mode = 'tab', binary, args = [] } = opts;
+    const { mode = 'tab', binary, args = [], key } = opts;
     this._tabMode = mode;
 
-    const probeClient = new PiggyClient();
-    const alreadyRunning = await probeClient.probe();
+    const probeClient = new PiggyClient({ key });
+    let alreadyRunning = false;
+    try {
+      alreadyRunning = await probeClient.probe();
+    } catch (err) {
+      if (err.authFailure) {
+        // Something IS listening on 2005 — it just rejected our key.
+        // Spawning a second binary would only fail to bind the port and
+        // confuse things further, so surface the real problem instead.
+        log.error('An instance is already running on port 2005, but it rejected this key.');
+        throw err;
+      }
+      // Otherwise treat it like "nothing there" and fall through to spawn.
+    }
 
     if (alreadyRunning) {
       log.info('Existing Piggy instance found on port 2005 — joining it');
@@ -38,7 +50,7 @@ class Piggy extends EventEmitter {
       log.info(`Launching Nothing Browser (mode: ${mode})`);
       const binPath = resolveBinary(binary, mode);
       this._proc = await spawnBinary(binPath, { args });
-      this._client = new PiggyClient();
+      this._client = new PiggyClient({ key });
       await this._client.connect(); // retries internally until the WS server is up
     }
 

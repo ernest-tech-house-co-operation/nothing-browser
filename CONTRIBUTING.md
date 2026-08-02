@@ -1,6 +1,3 @@
-## `CONTRIBUTING.md`
-
-```markdown
 # Contributing to Nothing Browser (Piggy Library)
 
 Thanks for wanting to contribute! This document covers the **TypeScript/Bun library** (`nothing-browser` npm package).
@@ -12,6 +9,7 @@ Thanks for wanting to contribute! This document covers the **TypeScript/Bun libr
 ## Quick Links
 
 - **Documentation:** [nothing-browser-docs.pages.dev](https://nothing-browser-docs.pages.dev/guide/piggy/quickstart)
+- **Wire protocol (v2.0.0+):** [`PROTOCOL.md`](PROTOCOL.md)
 - **GitHub Issues:** [BunElysiaReact/nothing-browser/issues](https://github.com/BunElysiaReact/nothing-browser/issues)
 - **Discord:** [Join server](https://discord.gg/TUxBVQ7y)
 
@@ -19,24 +17,28 @@ Thanks for wanting to contribute! This document covers the **TypeScript/Bun libr
 
 ## ⚠️ Important: Binary Must Support Features First
 
-Piggy is a **client library** that communicates with the Nothing Browser binary over a socket.
+Piggy is a **client library** that communicates with the Nothing Browser binary over a WebSocket, on a fixed port (2005 — always, hardcoded, never a config option). As of v2.0.0 the binary is a shared daemon: any number of client connections — this library, someone's Python script, a raw `websocat` session — can talk to one running instance at once, all speaking the same JSON-over-WebSocket protocol described in [`PROTOCOL.md`](PROTOCOL.md).
 
 **You cannot add a new feature to the library without the binary supporting it.**
 
 ```
-Binary (C++) → Library (TypeScript) → Documentation
-     ↑                ↑                    ↑
-   Must exist      Must match          Must explain
-   first           the binary           the feature
+Binary (C++) → Wire protocol (PROTOCOL.md) → Library (TypeScript) → Documentation
+     ↑                    ↑                        ↑                     ↑
+   Must exist         Must document            Must match           Must explain
+   first              the command              the binary            the feature
 ```
 
-If you send a PR adding `site.newFunction()` to the library, be prepared to answer:
+Because the wire protocol is now the actual contract other languages build
+against (not just an implementation detail of this library), a new or
+changed command needs **`PROTOCOL.md` updated in the same PR**, not just
+the TypeScript wrapper. If you send a PR adding `site.newFunction()` to
+the library, be prepared to answer:
 
 - Where is the binary change?
-- What socket command does it use?
+- What WebSocket command does it use, and is it in `PROTOCOL.md`?
 - Why do we need this?
 
-**No binary change = PR rejected.**
+**No binary change = PR rejected. Binary change without a `PROTOCOL.md` update = also rejected.**
 
 ---
 
@@ -49,7 +51,7 @@ If you send a PR adding `site.newFunction()` to the library, be prepared to answ
 | **Documentation** | ✅ Merge instantly |
 | **Tests** | ✅ Merge |
 | **Performance improvements** | ✅ Merge |
-| **New features (with binary change)** | 🤷 Depends (convince me) |
+| **New features (with binary change + `PROTOCOL.md` update)** | 🤷 Depends (convince me) |
 
 ---
 
@@ -60,7 +62,9 @@ If you send a PR adding `site.newFunction()` to the library, be prepared to answ
 | **`human/index.ts` changes** | 🚫 100% denied (human mode is finely tuned) |
 | **New features without binary change** | 🚫 Denied |
 | **Replacing Elysia with Express/Fastify/etc.** | 🚫 Denied (Elysia stays) |
-| **Changes to socket protocol without binary** | 🚫 Denied |
+| **Changes to the WebSocket protocol without a binary change *and* a `PROTOCOL.md` update** | 🚫 Denied |
+| **Changing the fixed port (2005) or making it configurable** | 🚫 Denied — this is deliberate, see `PROTOCOL.md` |
+| **Reverting `close()` to kill the whole shared daemon** | 🚫 Denied — that's what `shutdown()` is for; `close()` being per-connection is intentional (v2.0.0) |
 
 ---
 
@@ -102,9 +106,11 @@ Before submitting a PR:
 
 - [ ] Does it fix a bug? (Explain the bug)
 - [ ] Does it add a feature? (If yes, where's the binary change?)
+- [ ] Does it touch the wire protocol? (If yes, is `PROTOCOL.md` updated?)
 - [ ] Did you update TypeScript types?
 - [ ] Did you update documentation?
 - [ ] Did you touch `human/index.ts`? (If yes, don't submit)
+- [ ] If it touches connection/lifecycle logic — did you test it against a shared instance (two clients connected at once), not just a freshly spawned one?
 - [ ] Did you run `bun test` (if tests exist)?
 - [ ] Did you run `bun run build` to ensure no errors?
 
@@ -134,7 +140,7 @@ bun test
 ```
 nothing-browser/
 ├── piggy/
-│   ├── client/          # Socket client
+│   ├── client/          # WebSocket client (fixed port 2005, join-or-launch logic)
 │   ├── launch/          # Binary detection & spawning
 │   ├── register.ts      # Site registration
 │   ├── server.ts        # Elysia API server
@@ -160,16 +166,34 @@ await piggy.register("test", "https://example.com");
 await piggy.test.navigate();
 const title = await piggy.test.title();
 console.log(title);
-await piggy.close();
+await piggy.close(); // closes only THIS script's tab — the binary keeps running
 ```
+
+Note that `piggy.close()` won't stop the binary process anymore (v2.0.0+)
+— it's per-connection now. If your test script is the only thing running
+and you want the binary to actually exit afterward, call
+`await piggy.shutdown()` instead of `close()`.
+
+### Testing shared-daemon / multi-client behavior
+
+If your change touches `PiggyServer`, connection handling, tab ownership,
+or anything lifecycle-related, don't just test it against a single
+freshly-spawned instance — that'll pass even if you've broken isolation
+between clients. Start a daemon manually, then run two client scripts
+against it concurrently and confirm they don't interfere with each other
+(events, tab ownership, `close()` scope). `PROTOCOL.md` has example
+clients you can adapt for this; a quick raw `ws`/`websocat` script that
+logs every message it receives is usually the fastest way to catch a
+regression here.
 
 ### Run with Local Binary
 
 Make sure you have a `nothing-browser-headless` binary in your project root:
 
 ```bash
-# Download from releases
-wget https://github.com/BunElysiaReact/nothing-browser/releases/download/v0.1.9/nothing-browser-headless-0.1.9-linux-x86_64.tar.gz
+# Download the latest release from GitHub
+# (check https://github.com/BunElysiaReact/nothing-browser/releases for the current tag)
+wget https://github.com/BunElysiaReact/nothing-browser/releases/latest/download/nothing-browser-headless-linux-x86_64.tar.gz
 tar -xzf nothing-browser-headless-*.tar.gz
 chmod +x nothing-browser-headless
 
@@ -181,7 +205,7 @@ bun run test.ts
 
 ## Documentation
 
-If your PR changes the API, update the docs at [nothing-browser-docs](https://github.com/BunElysiaReact/nothing-browser-docs).
+If your PR changes the API, update the docs at [nothing-browser-docs](https://github.com/BunElysiaReact/nothing-browser-docs). If it changes the wire protocol, update [`PROTOCOL.md`](PROTOCOL.md) too — that's the reference other-language client authors rely on, so it needs to stay accurate even when a change is "just" internal to how this library uses the protocol.
 
 The docs are VitePress. To preview locally:
 
@@ -208,10 +232,12 @@ bun run dev
 | Bug fixes | ✅ Yes, please |
 | Documentation | ✅ Yes, please |
 | TypeScript types | ✅ Yes, please |
-| New features | Need binary change + convincing |
+| New features | Need binary change + `PROTOCOL.md` update + convincing |
 | `human/index.ts` | ❌ Don't touch |
 | Replace Elysia | ❌ No. Never. |
-| Community language libs | You build it, you maintain it |
+| Making port 2005 configurable | ❌ No. It's fixed on purpose. |
+| Reverting `close()` to a global kill | ❌ No. Use/extend `shutdown()` instead. |
+| Community language libs | You build it, you maintain it — `PROTOCOL.md` is your spec |
 
 **If you're cool with that, welcome aboard.**
 

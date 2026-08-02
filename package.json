@@ -30,7 +30,8 @@
     "README.md"
   ],
   "dependencies": {
-    "ernest-logger": "^2.0.4"
+    "ernest-logger": "^2.0.4",
+    "ws": "^8.21.1"
   },
   "engines": {
     "node": ">=18.0.0",

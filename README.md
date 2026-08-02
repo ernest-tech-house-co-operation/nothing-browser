@@ -38,6 +38,55 @@ await piggy.close();
 
 ---
 
+## 🎉 v2.0.0 — the binary is now a shared daemon
+
+The single biggest change in `nothing-browser` since it launched. The
+JS library used to talk to the binary over a 1:1 named pipe — one
+script, one binary, one browser, every time. **That's gone.** The
+binary now runs a single WebSocket server on a fixed port
+(**2005 — always, never configurable**), and any number of scripts can
+connect to it at once.
+
+**What that means in practice:**
+
+- **`piggy.launch()` joins before it spawns.** If a Nothing Browser
+  instance is already running, your script connects to it instead of
+  starting a second one. Ten scraper scripts running at once can now
+  share one binary and one browser process instead of ten.
+- **Language-agnostic by design.** The wire protocol is plain JSON over
+  WebSocket text frames — nothing JS-specific about it. Want to drive
+  the binary from Python, C++, Go, whatever? See
+  [`PROTOCOL.md`](PROTOCOL.md) for the full spec and working example
+  clients. This JS library is just one client among however many you
+  want to write.
+- **Optional key auth**, enforced on every connection to an instance —
+  including local ones — not just remote. Useful the moment you're
+  exposing a daemon beyond your own machine.
+- **⚠️ Breaking change: `piggy.close()` is now per-script, not global.**
+  In v1, calling `close()` tore down the entire binary. With a shared
+  daemon, that would mean one script finishing its job kills the browser
+  out from under every other script using it — so `close()` now only
+  closes *your* tabs and disconnects *your* script. The daemon keeps
+  running for everyone else. If you actually want to end the shared
+  instance for everyone, there's a new method for that:
+  **`piggy.shutdown()`.** If you're upgrading from v1 and relied on
+  `close()` ending the process, switch that call to `shutdown()`.
+
+```ts
+// v1 behavior — close() ended everything
+await piggy.close(); // used to kill the whole binary
+
+// v2 — close() is scoped to you; shutdown() is the real kill switch
+await piggy.close();    // just your tabs, daemon stays up for others
+await piggy.shutdown(); // ends the shared daemon for every connected script
+```
+
+Nothing about the day-to-day scraping API changed — `site.*` methods
+all work exactly the same. This is purely a transport-and-lifecycle
+upgrade under the hood.
+
+---
+
 ## Why nothing-browser?
 
 |                         | nothing-browser | Puppeteer | Playwright |
@@ -48,9 +97,16 @@ await piggy.close();
 | Network capture        | ✅ built in    | ❌ manual  | ❌ manual  |
 | Built-in API server    | ✅             | ❌        | ❌         |
 | Cloudflare bypass      | ✅ passes      | ⚠️ often blocked | ⚠️ often blocked |
+| Shared multi-script daemon | ✅ one binary, many scripts | ❌ one browser per script | ❌ one browser per script |
 | **Browser → Node.js RPC** | ✅ **`exposeFunction`** | ✅ `page.exposeFunction` | ✅ `page.exposeFunction` |
 
 One import. No 47 plugins to avoid detection. Just write your scraper and go.
+
+For very basic, static, low-effort scraping jobs — a handful of pages,
+nothing anti-bot, no session persistence — Puppeteer is a reasonably
+common lighter-weight pick too, since there's no separate binary process
+to manage. `nothing-browser` handles that same simple case fine, and
+scales up into everything above if the project ever needs it.
 
 ---
 
@@ -71,7 +127,14 @@ Download the correct binary from **[GitHub Releases](https://github.com/BunElysi
 | `nothing-browser-headless` | No window, no GPU – for automated scraping | **Your project root** |
 | `nothing-browser-headful` | Visible window, script-controlled – for debugging | **Your project root** |
 
-The library communicates with the binary in your project root over a local socket.
+The library talks to the binary over a WebSocket on a fixed port
+(**2005**, always — nothing to configure). If a Nothing Browser instance is
+already running when you call `piggy.launch()`, the library just connects
+to it instead of spawning a second one — any number of scripts can share
+one binary and one browser. Prefer writing your scraper in another
+language entirely? The binary doesn't care who's on the other end of the
+socket — see [`PROTOCOL.md`](PROTOCOL.md) for the full wire protocol if
+you want to skip this JS library and talk to it directly.
 
 ---
 
@@ -190,12 +253,14 @@ await piggy.serve(3000);
 
 | Method | Description |
 |--------|-------------|
-| `piggy.launch(opts?)` | Start browser (`mode`, `binary`) |
+| `piggy.launch(opts?)` | Start browser (`mode`, `binary`, `key`) — joins an already-running instance on port 2005 if one exists |
+| `piggy.connect(opts)` | Connect to a specific instance, local or remote (`host`, `key`) — port is always 2005 |
 | `piggy.register(name, url)` | Register a site → `piggy.<name>` |
 | `piggy.actHuman(enable)` | Enable human‑like timing |
 | `piggy.expose(name, handler)` | Global RPC function |
 | `piggy.serve(port)` | Start API server |
-| `piggy.close(opts?)` | Close gracefully or force |
+| `piggy.close(opts?)` | Close gracefully or force — closes only *your* tabs/connection, other scripts sharing the instance are unaffected |
+| `piggy.shutdown()` | Terminate the shared binary entirely — every script, every tab. Use deliberately. |
 
 ### Site Methods
 

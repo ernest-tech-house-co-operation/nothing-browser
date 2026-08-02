@@ -34,11 +34,19 @@ await piggy.close();
 
 ### Launch & Connect
 
+> **Transport note:** all of this runs over a single WebSocket on a fixed
+> port (**2005**, never configurable). `launch()` first checks whether an
+> instance is already listening there — if so it just joins it instead of
+> spawning a new binary, so any number of scripts can share one browser.
+> Writing your scraping logic in something other than JS? See
+> [`PROTOCOL.md`](PROTOCOL.md) for the raw wire protocol.
+
 | Method | Parameters | Description |
 |--------|-----------|-------------|
-| `piggy.launch(opts?)` | `{ mode?, binary?, args? }` | Spawn binary locally and connect |
-| `piggy.connect(opts)` | `{ host, key }` | Connect to remote VPS (HTTP mode, port 2005) |
-| `piggy.close(opts?)` | `{ force? }` | Shut down binary and socket |
+| `piggy.launch(opts?)` | `{ mode?, binary?, args? }` | Join an already-running instance on port 2005 if one exists; otherwise spawn the binary and connect |
+| `piggy.connect(opts)` | `{ host, key? }` | Connect to a specific instance (local or remote) on port 2005 |
+| `piggy.close(opts?)` | `{ force? }` | Close **only this script's** tabs and connection. The shared binary keeps running for anyone else connected to it. `force` kills the local child process too, if this script spawned one. |
+| `piggy.shutdown()` | — | The real kill switch — terminates the shared binary for every connected script. Not the same as `close()`. |
 | `piggy.detect(binary)` | `string` | Returns binary path or `null` |
 
 **`launch` options:**
@@ -52,10 +60,14 @@ await piggy.close();
 **`connect` example:**
 ```js
 await piggy.connect({
-  host: 'http://your-vps-ip:2005',
+  host: '203.0.113.5', // bare hostname or IP — port is always 2005
   key:  'peaseernestbd7436aecf7041a39532a03308b8ee3350495f3cdb534b8294f9d'
 });
 ```
+
+The instance you're connecting to only enforces `key` if it was started
+with one (the headless daemon asks "require a connection key?" on first
+run). Local instances typically don't need one.
 
 ---
 
@@ -152,6 +164,12 @@ Routes are registered on the site object — see `site.api()` below.
 piggy.onEvent(eventName, tabId, handler)
 // tabId: specific tabId string, or '*' for all tabs
 ```
+
+> Since a binary instance can now be shared across multiple scripts,
+> tab-scoped events (`navigate`, `dialog`, `exposed_call`) are only
+> delivered to the script whose connection created that tab — not
+> broadcast to every script sharing the instance. Proxy events remain
+> global, since proxy state applies to the whole process.
 
 | Event | Data | When |
 |-------|------|------|

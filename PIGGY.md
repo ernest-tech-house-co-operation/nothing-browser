@@ -6,9 +6,13 @@
 
 ## What Piggy Is
 
-Piggy is a Node.js library that controls a C++ Qt6 headless browser binary over a named pipe (local) or HTTP (remote VPS). Every method on `site.*` sends a JSON command to the binary and awaits a response. The binary does all DOM work, fingerprinting, proxy routing, and network capture. The JS library is a thin command mapper.
+Piggy is a Node.js library that controls a C++ Qt6 headless browser binary over a WebSocket on a fixed port (2005 — always, never configurable). Every method on `site.*` sends a JSON command to the binary and awaits a response. The binary does all DOM work, fingerprinting, proxy routing, and network capture. The JS library is a thin command mapper — the binary is written to the wire protocol, not to JavaScript, so any language that can open a WebSocket can drive it (see `PROTOCOL.md`).
+
+The binary is a shared daemon: `piggy.launch()` first checks whether an instance is already listening on port 2005 and joins it if so, only spawning a new one if nothing answers. Multiple scripts can share one binary and one browser at once.
 
 **You do not need Playwright, Puppeteer, or any other browser library. Piggy is the only browser tool in this project.**
+
+> **Puppeteer note:** if you're weighing tools in general (outside this project) — for very basic, static scraping (a handful of pages, no anti-bot measures, no persistent login, no proxy rotation) Puppeteer is a commonly suggested lighter-weight choice, since it doesn't involve managing a separate binary process. Piggy handles that same basic case just fine too, and you get fingerprinting, proxy rotation, human-mode timing, session persistence, and a shared multi-script daemon for free if the project ever grows into needing any of that. Within *this* project, use Piggy — it's already wired up and the binary's already running.
 
 ---
 
@@ -17,11 +21,15 @@ Piggy is a Node.js library that controls a C++ Qt6 headless browser binary over 
 ```js
 const piggy = require('nothing-browser').default;
 
-// 1. Launch binary
+// 1. Launch binary — joins an already-running instance on port 2005 if one
+//    exists, otherwise spawns a fresh one. `key` is only needed if that
+//    instance was started with a connection key required (see "Shared
+//    Daemon & Multiple Scripts" below) — omit it for an open/local daemon.
 await piggy.launch({
   mode: 'tab',
-  binary: 'C:/path/to/nothing-browser-headless.exe'  // Windows
-  // binary: './nothing-browser-headless'             // Linux/macOS
+  binary: 'C:/path/to/nothing-browser-headless.exe',  // Windows
+  // binary: './nothing-browser-headless',             // Linux/macOS
+  // key: 'peaseernest...',                             // only if required
 });
 
 // 2. Register one site per domain you need
@@ -32,17 +40,69 @@ await piggy.amazon.navigate();
 await piggy.amazon.wait.selector({ selector: '[data-asin]' });
 const titles = await piggy.amazon.provide.textAll({ selector: 'h2 span' });
 
-// 4. Close when done
+// 4. Close YOUR tabs when done — see below, this does NOT stop the daemon
+//    for other scripts sharing it.
 await piggy.close();
 ```
 
-Remote VPS (binary running in HTTP mode on port 2005):
+Remote instance (binary listening on port 2005, key-protected):
 ```js
 await piggy.connect({
-  host: 'http://your-vps-ip:2005',
+  host: 'your-vps-ip',             // bare host — port is always 2005
   key:  'peaseernest...'           // from the .piggy key file
 });
 ```
+
+---
+
+## Shared Daemon & Multiple Scripts
+
+Piggy's binary is one shared process behind a WebSocket on port 2005 — not
+one-per-script. Keep these rules in mind whenever more than one script
+might be touching the same instance (or might touch it in the future):
+
+- **`piggy.launch()` joins before it spawns.** If something's already
+  listening on 2005, this script connects to it instead of starting a new
+  browser. Don't assume `launch()` always means "a fresh browser just for
+  me" — treat every tab you create as living in a shared space.
+
+- **`piggy.close()` is per-script, not global.** It closes only the tabs
+  *this* script's connection created, then disconnects. It does **not**
+  stop the binary, and it does **not** affect any other script currently
+  connected to the same daemon. This is intentional — one script finishing
+  its job should never yank the browser out from under another script
+  still using it.
+
+- **`piggy.shutdown()` is the real kill switch.** It terminates the whole
+  shared binary — every tab, every connected script, gone. Only call this
+  if you specifically intend to end the daemon for everyone, e.g. a
+  top-level orchestrator script that's the last one done. Don't call it
+  from a script that might be one of several sharing the instance unless
+  you're sure it's meant to be the one that shuts things down.
+
+  ```js
+  // ⚠️ only do this if YOU are meant to be the one ending the shared session
+  await piggy.shutdown();
+  ```
+
+- **A key, if required, is required for every connection to that
+  instance** — including local ones on `127.0.0.1`. It's not just for
+  remote connections. If the daemon you're joining was started with a
+  connection key, pass it to `launch()` (local) or `connect()` (remote) —
+  same option either way:
+
+  ```js
+  await piggy.launch({ key: 'peaseernest...' });   // local, key-protected daemon
+  await piggy.connect({ host: '1.2.3.4', key: 'peaseernest...' }); // remote
+  ```
+
+  A missing or wrong key is rejected outright — you'll get a thrown error
+  from `launch()`/`connect()`, not a connection that half-works.
+
+- **Tab-scoped events only reach the script that owns the tab.** If you
+  register listeners like `site.on('dialog', ...)` or `site.on('navigate', ...)`,
+  you'll only ever see events for tabs *your* connection created — not
+  every tab every script on the shared daemon has open.
 
 ---
 
@@ -783,6 +843,8 @@ site.on('qr',       d   => console.log('QR:', d.qrData))
 | Using `nothing-server` (Elysia npm package) | The API server is built into the binary — use `site.api()` + `piggy.serve()` |
 | Calling `site.url()` synchronously | It's async — `await site.url()` |
 | Assuming `find.css()` returns DOM nodes | It returns `ElementDescriptor[]` — plain objects with text/attrs/etc |
+| Calling `piggy.close()` expecting the whole browser to stop | It's per-script — use `piggy.shutdown()` if you actually mean to end the shared daemon for everyone |
+| Connecting to a key-protected local daemon without a key | Keys apply to every connection, including `127.0.0.1` — pass `key` to `launch()` too, not just `connect()` |
 
 ---
 
@@ -821,6 +883,7 @@ project/
 | Mock an API endpoint | `intercept.respond(pattern, response)` |
 | Run same scrape on 3 sites | `piggy.all([s1, s2, s3]).evaluate(js)` |
 | Save scraped data | `nothing-store` plugin with `piggy.store.json` schema |
+| Simple, static, low-effort scrape and Piggy isn't already in the project | Puppeteer is a reasonable lighter-weight pick outside this project — but Piggy works fine for this too |
 
 ---
 
